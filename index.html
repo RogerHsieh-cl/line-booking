@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>線上預約</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{--g:#06C755;--g2:#e7f8ee;--bd:#e5e7eb;--tx:#111827;--sub:#6b7280;--bg:#f6f7f9;--red:#dc2626}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font:15px/1.5 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;color:var(--tx);background:var(--bg);padding-bottom:40px}
+  header{background:#fff;padding:16px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center}
+  h1{font-size:18px;margin:0}
+  #who{color:var(--sub);font-size:13px}
+  section{background:#fff;margin:12px;border-radius:12px;padding:14px;border:1px solid var(--bd)}
+  h2{font-size:15px;margin:0 0 10px}
+  .empty{color:var(--sub);font-size:14px}
+  .bk{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--bd)}
+  .bk:first-of-type{border-top:0}
+  .bk .t{font-weight:600}
+  .bk .hint{font-size:12px;color:var(--sub)}
+  .btns{display:flex;gap:6px}
+  button{font:inherit;border:1px solid var(--bd);background:#fff;border-radius:8px;padding:6px 12px;cursor:pointer}
+  button:disabled{opacity:.4;cursor:default}
+  .danger{color:var(--red);border-color:#fecaca}
+  .primary{background:var(--g);border-color:var(--g);color:#fff;font-weight:600}
+  .dates{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;scrollbar-width:none}
+  .dates::-webkit-scrollbar{display:none}
+  .date{flex:0 0 auto;text-align:center;min-width:64px;padding:6px 8px;line-height:1.3}
+  .date small{display:block;font-size:11px;color:var(--sub)}
+  .date.on{background:var(--g);border-color:var(--g);color:#fff}
+  .date.on small{color:#fff}
+  .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;margin-top:10px}
+  .slot{padding:10px 0;font-weight:600}
+  .slot.full{background:#f3f4f6;color:#9ca3af;font-weight:400}
+  .slot.mine{background:var(--g2);border-color:var(--g);color:#047857}
+  #banner{margin:12px;padding:10px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px}
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;z-index:10}
+  .sheet{background:#fff;width:100%;border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
+  .sheet h3{margin:0 0 6px;font-size:17px}
+  .sheet p{margin:0 0 12px;color:var(--sub)}
+  .sheet textarea{width:100%;border:1px solid var(--bd);border-radius:8px;padding:8px;font:inherit;resize:none;margin-bottom:12px}
+  .sheet .row{display:flex;gap:8px}
+  .sheet .row button{flex:1;padding:12px}
+  #toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:rgba(17,24,39,.92);color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
+  #toast.show{opacity:1}
+  #busy{position:fixed;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:30;font-size:14px;color:var(--sub)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><h1>線上預約</h1><div id="who"></div></header>
+
+<section>
+  <h2>我的預約</h2>
+  <div id="mine"><div class="empty">載入中…</div></div>
+</section>
+
+<div id="banner" hidden></div>
+
+<section>
+  <h2 id="pickTitle">選擇時段</h2>
+  <div id="dates" class="dates"></div>
+  <div id="slots" class="slots"></div>
+</section>
+
+<div id="mask" class="mask" hidden>
+  <div class="sheet">
+    <h3 id="shTitle"></h3>
+    <p id="shBody"></p>
+    <textarea id="shNote" rows="2" maxlength="200" placeholder="備註（選填，例如：聯絡電話、需求）"></textarea>
+    <div class="row">
+      <button id="shCancel">返回</button>
+      <button id="shOk" class="primary">確認</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<div id="busy" hidden>處理中…</div>
+
+<script>
+/* ======== 部署時修改這三個值 ======== */
+const LIFF_ID = 'YOUR_LIFF_ID';
+const GAS_URL = 'https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec';
+const SEND_CHAT_CONFIRM = true; // 完成後以使用者身分在聊天室送出確認訊息（需 chat_message.write scope，免費、不佔官方帳號訊息額度）
+/* =================================== */
+
+const TZ = 'Asia/Taipei';
+const WD = {Sun:'日',Mon:'一',Tue:'二',Wed:'三',Thu:'四',Fri:'五',Sat:'六'};
+const $ = id => document.getElementById(id);
+let idToken = '', state = null, selDate = null, moving = null;
+
+/* ---------- 時間格式（固定台北時區，不受手機時區影響） ---------- */
+const dtf = new Intl.DateTimeFormat('en-US', {timeZone:TZ, hourCycle:'h23', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', weekday:'short'});
+function parts(ms){ const o = {}; dtf.formatToParts(new Date(ms)).forEach(p => o[p.type] = p.value); return o; }
+const hm = ms => { const p = parts(ms); return `${p.hour}:${p.minute}`; };
+const md = ms => { const p = parts(ms); return `${p.month}/${p.day}（${WD[p.weekday]}）`; };
+const range = (s, e) => `${md(s)} ${hm(s)}–${hm(e)}`;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ---------- 啟動 ---------- */
+main();
+async function main(){
+  try{
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    idToken = liff.getIDToken();
+    if (!idToken) throw new Error('無法取得 ID token，請確認 LIFF scope 已勾選 openid');
+    await call('init');
+  }catch(e){
+    $('mine').innerHTML = `<div class="empty">初始化失敗：${esc(e.message || e)}</div>`;
+  }
+}
+
+/* ---------- API ---------- */
+async function call(action, extra = {}){
+  busy(true);
+  let reload = false;
+  try{
+    // 不帶 Content-Type → text/plain，屬 simple request，GAS 不需處理 CORS preflight
+    const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, ...extra }) });
+    const j = await res.json();
+    if (!j.ok){
+      if (j.error === 'TOKEN_INVALID'){
+        if (liff.isInClient()) location.reload();
+        else { liff.logout(); liff.login({ redirectUri: location.href }); }
+        return null;
+      }
+      toast(j.message || '發生錯誤');
+      reload = ['SLOT_TAKEN','INVALID_SLOT','NOT_FOUND'].includes(j.error);
+      return null;
+    }
+    state = j;
+    render();
+    return j;
+  }catch(e){
+    toast('連線失敗，請稍後再試');
+    return null;
+  }finally{
+    busy(false);
+    if (reload) setTimeout(() => call('init'), 0);
+  }
+}
+
+/* ---------- Render ---------- */
+function render(){
+  $('who').textContent = state.user.name;
+
+  // 我的預約
+  const mine = state.mine;
+  $('mine').innerHTML = mine.length ? mine.map(b => `
+    <div class="bk">
+      <div>
+        <div class="t">${range(b.start, b.end)}</div>
+        ${b.canChange ? '' : `<div class="hint">開始前 ${state.config.minCancelMinutes} 分鐘內無法線上異動</div>`}
+      </div>
+      <div class="btns">
+        <button data-act="move" data-id="${esc(b.id)}" ${b.canChange ? '' : 'disabled'}>改期</button>
+        <button data-act="cancel" data-id="${esc(b.id)}" class="danger" ${b.canChange ? '' : 'disabled'}>取消</button>
+      </div>
+    </div>`).join('') : '<div class="empty">目前沒有預約</div>';
+
+  // 改期提示
+  if (moving && !mine.some(b => b.id === moving.id)) moving = null;
+  $('banner').hidden = !moving;
+  if (moving){
+    $('banner').innerHTML = `<span>改期中：原 ${range(moving.start, moving.end)}，請選擇新時段</span><button id="stopMove">取消改期</button>`;
+    $('stopMove').onclick = () => { moving = null; render(); };
+  }
+  $('pickTitle').textContent = moving ? '選擇新時段' : '選擇時段';
+
+  // 日期 tabs
+  const byDate = {};
+  state.slots.forEach(s => (byDate[s.date] = byDate[s.date] || []).push(s));
+  const dates = Object.keys(byDate).sort();
+  if (!dates.length){
+    $('dates').innerHTML = ''; $('slots').innerHTML = '<div class="empty">目前沒有開放的時段</div>';
+    return;
+  }
+  if (!byDate[selDate]) selDate = dates.find(d => byDate[d].some(s => s.ok)) || dates[0];
+
+  $('dates').innerHTML = dates.map(d => {
+    const n = byDate[d].filter(s => s.ok).length;
+    return `<button class="date ${d === selDate ? 'on' : ''}" data-date="${d}">${md(byDate[d][0].start)}<small>${n ? '可約 ' + n : '已滿'}</small></button>`;
+  }).join('');
+
+  $('slots').innerHTML = byDate[selDate].map(s => {
+    if (s.mine) return `<button class="slot mine" disabled>${hm(s.start)}<br><small>我的</small></button>`;
+    if (!s.ok)  return `<button class="slot full" disabled>${hm(s.start)}<br><small>已滿</small></button>`;
+    return `<button class="slot" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}</button>`;
+  }).join('');
+}
+
+/* ---------- 事件 ---------- */
+$('dates').addEventListener('click', e => {
+  const b = e.target.closest('[data-date]'); if (!b) return;
+  selDate = b.dataset.date; render();
+});
+
+$('slots').addEventListener('click', async e => {
+  const b = e.target.closest('[data-start]'); if (!b) return;
+  const start = Number(b.dataset.start), end = Number(b.dataset.end);
+  if (moving){
+    const r = await sheet({ title:'確認改期', body:`${range(moving.start, moving.end)}<br>→ <b>${range(start, end)}</b>`, okText:'確認改期' });
+    if (!r) return;
+    const j = await call('reschedule', { eventId: moving.id, start });
+    if (j){ moving = null; done(j.done); render(); }
+  }else{
+    const r = await sheet({ title:'確認預約', body:`<b>${range(start, end)}</b>`, note:true, okText:'確認預約' });
+    if (!r) return;
+    const j = await call('book', { start, note: r.note });
+    if (j) done(j.done);
+  }
+});
+
+$('mine').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const bk = state.mine.find(x => x.id === b.dataset.id); if (!bk) return;
+  if (b.dataset.act === 'move'){
+    moving = bk; render();
+    window.scrollTo({ top: $('banner').offsetTop - 8, behavior:'smooth' });
+  }else{
+    const r = await sheet({ title:'取消預約', body:`確定取消 <b>${range(bk.start, bk.end)}</b>？`, okText:'確定取消', danger:true });
+    if (!r) return;
+    const j = await call('cancel', { eventId: bk.id });
+    if (j) done(j.done);
+  }
+});
+
+/* ---------- 完成通知 ---------- */
+async function done(d){
+  if (!d) return;
+  const label = { book:'✅ 預約成功', reschedule:'🔄 已改期', cancel:'❌ 已取消預約' }[d.action];
+  toast(label);
+  if (!SEND_CHAT_CONFIRM || !liff.isInClient()) return;
+  try{ await liff.sendMessages([{ type:'text', text:`${label}\n${range(d.start, d.end)}` }]); }catch(_){ /* 非聊天室開啟或未授權 scope 時忽略 */ }
+}
+
+/* ---------- UI helpers ---------- */
+function sheet({ title, body, note = false, okText = '確認', danger = false }){
+  return new Promise(resolve => {
+    $('shTitle').textContent = title;
+    $('shBody').innerHTML = body;
+    $('shNote').hidden = !note; $('shNote').value = '';
+    $('shOk').textContent = okText;
+    $('shOk').className = danger ? 'danger' : 'primary';
+    $('mask').hidden = false;
+    const close = v => { $('mask').hidden = true; $('shOk').onclick = $('shCancel').onclick = $('mask').onclick = null; resolve(v); };
+    $('shOk').onclick = () => close({ note: $('shNote').value.trim() });
+    $('shCancel').onclick = () => close(null);
+    $('mask').onclick = e => { if (e.target === $('mask')) close(null); };
+  });
+}
+function busy(on){ $('busy').hidden = !on; }
+let toastTimer;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+</script>
+</body>
+</html>
