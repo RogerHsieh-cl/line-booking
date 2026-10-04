@@ -126,15 +126,15 @@ async function call(action, extra = {}){
         else { liff.logout(); liff.login({ redirectUri: location.href }); }
         return null;
       }
-      toast(j.message || '發生錯誤');
-      reload = ['SLOT_TAKEN','INVALID_SLOT','NOT_FOUND'].includes(j.error);
+      fail(`${j.message || '發生錯誤'}（${j.error}）`);
+      reload = !!state && ['SLOT_TAKEN','INVALID_SLOT','NOT_FOUND'].includes(j.error);
       return null;
     }
     state = j;
     render();
     return j;
   }catch(e){
-    toast('連線失敗，請稍後再試');
+    fail('連線失敗：' + (e.message || e));
     return null;
   }finally{
     busy(false);
@@ -252,6 +252,11 @@ function sheet({ title, body, note = false, okText = '確認', danger = false })
   });
 }
 function busy(on){ $('busy').hidden = !on; }
+// 首次載入失敗時把錯誤固定顯示在頁面上（toast 會消失，不利除錯）
+function fail(msg){
+  if (!state) $('mine').innerHTML = `<div class="empty" style="color:var(--red)">載入失敗：${esc(msg)}</div>`;
+  toast(msg);
+}
 let toastTimer;
 function toast(msg){
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
