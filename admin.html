@@ -76,6 +76,7 @@
   .sp:first-of-type{border-top:0}
   .sp .hd{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:6px;font-variant-numeric:tabular-nums}
   .preview{font-size:13px;color:var(--sub);margin-top:6px}
+  .warnbox{background:#fff7ed;border:1px solid #fed7aa;color:var(--amber);border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:12px}
   .savebar{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--bd);padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;justify-content:space-between;z-index:6}
   .savebar .st{font-size:13px;color:var(--sub)}
   .savebar .st.dirty{color:var(--amber);font-weight:600}
@@ -142,6 +143,17 @@
     </div>
 
     <div class="card">
+      <h2>前一天提醒</h2>
+      <p class="desc">每天固定時間，用店家官方帳號推播隔天的預約提醒給客人。客人必須已加店家官方帳號好友才收得到。</p>
+      <div id="remWarn" class="warnbox" hidden>尚未設定指令碼屬性 LINE_MESSAGING_TOKEN，開啟後也不會發送。</div>
+      <div class="grid">
+        <div class="fld"><label class="sw" for="f-rem"><input type="checkbox" id="f-rem"> 啟用前一天提醒</label></div>
+        <div class="fld"><label for="f-remh">發送時間</label><div class="in"><select id="f-remh"></select></div></div>
+      </div>
+      <div class="acts" style="margin-top:12px"><button id="remTest">傳一則測試推播給我</button></div>
+    </div>
+
+    <div class="card">
       <h2>公休日</h2>
       <p class="desc">這些日期整天不開放預約。已過的日期儲存時會自動清掉。</p>
       <div class="addrow"><input type="date" id="closedIn" aria-label="新增公休日"><button id="closedAdd">加入公休日</button></div>
@@ -193,6 +205,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 
 let idToken = '', days = 7, data = null;
 let saved = null, cur = null;   // 設定：已儲存 / 編輯中
+let remReady = false;           // 後端是否已設定 LINE_MESSAGING_TOKEN
 $('from').value = ymd(Date.now());
 
 main();
@@ -288,6 +301,9 @@ function norm(s){
   const o = clone(s);
   o.closedDates = (o.closedDates || []).slice().sort();
   o.specialDates = o.specialDates || {};
+  o.reminderEnabled = !!o.reminderEnabled;
+  o.reminderHour = Number.isInteger(o.reminderHour) ? o.reminderHour : 20;
+  remReady = !!o.reminderReady; delete o.reminderReady;
   return o;
 }
 const isDirty = () => saved && cur && JSON.stringify(cur) !== JSON.stringify(saved);
@@ -326,6 +342,10 @@ function renderSettings(){
   $('f-cancel').value = cur.minCancelMinutes;
   $('f-max').value = cur.maxActivePerUser;
   $('f-full').checked = !!cur.showFullSlots;
+  $('f-rem').checked = cur.reminderEnabled;
+  $('f-remh').innerHTML = Array.from({length:24}, (_, h) => h).filter(h => h >= 7 && h <= 23)
+    .map(h => `<option value="${h}" ${h === cur.reminderHour ? 'selected' : ''}>前一天 ${String(h).padStart(2,'0')}:00</option>`).join('');
+  $('remWarn').hidden = remReady;
   hzPreview();
 
   $('closedList').innerHTML = cur.closedDates.length
@@ -362,6 +382,8 @@ $('pane-settings').addEventListener('change', e => {
   const map = { 'f-slot':'slotMinutes', 'f-cap':'capacity', 'f-hz':'horizonDays', 'f-lead':'minLeadMinutes', 'f-cancel':'minCancelMinutes', 'f-max':'maxActivePerUser' };
   if (map[t.id]){ cur[map[t.id]] = Number(t.value); if (t.id === 'f-hz') hzPreview(); updateSaveBar(); }
   if (t.id === 'f-full'){ cur.showFullSlots = t.checked; updateSaveBar(); }
+  if (t.id === 'f-rem'){ cur.reminderEnabled = t.checked; updateSaveBar(); }
+  if (t.id === 'f-remh'){ cur.reminderHour = Number(t.value); updateSaveBar(); }
 });
 $('f-hz').addEventListener('input', hzPreview);
 
@@ -419,6 +441,10 @@ $('save').addEventListener('click', async () => {
   if (!j.ok) return toast(j.msg);
   saved = norm(j.settings); cur = clone(saved);
   renderSettings(); toast('已儲存，客人重新開啟預約頁就會套用');
+});
+$('remTest').addEventListener('click', async () => {
+  const j = await call('testPush', {});
+  toast(j.ok ? '已送出，請到 LINE 查看官方帳號的訊息' : j.msg);
 });
 $('revert').addEventListener('click', () => { cur = clone(saved); renderSettings(); toast('已還原'); });
 window.addEventListener('beforeunload', e => { if (isDirty()){ e.preventDefault(); e.returnValue = ''; } });
