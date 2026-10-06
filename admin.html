@@ -90,6 +90,10 @@
   .sheet .r button{flex:1;padding:12px}
   #toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);background:rgba(17,24,39,.92);color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
   #toast.show{opacity:1}
+  #loadbar{position:fixed;left:0;right:0;top:0;height:3px;z-index:40;overflow:hidden;pointer-events:none}
+  #loadbar::before{content:"";position:absolute;inset:0;width:40%;background:var(--g);animation:lb 1s ease-in-out infinite}
+  @keyframes lb{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+  @media (prefers-reduced-motion:reduce){#loadbar::before{animation:none;width:100%;opacity:.6}}
   #busy{position:fixed;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:30;font-size:14px;color:var(--sub)}
   [hidden]{display:none!important}
 </style>
@@ -183,6 +187,7 @@
 </div>
 <div id="toast"></div>
 <div id="busy" hidden>處理中…</div>
+<div id="loadbar" hidden></div>
 
 <script>
 /* ======== 跟 index.html 相同的兩個值 ======== */
@@ -233,8 +238,11 @@ async function main(){
   }catch(e){ $('list').innerHTML = `<div class="err">初始化失敗：${esc(e.message || e)}</div>`; }
 }
 
+const WRITE_ACTIONS = ['adminCancel', 'saveSettings', 'testPush'];
+let inflight = 0;
 async function call(action, extra){
-  busy(true);
+  const block = WRITE_ACTIONS.includes(action);
+  if (block) busy(true); else { inflight++; $('loadbar').hidden = false; }
   try{
     const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, ...extra }) });
     const txt = await res.text();
@@ -246,13 +254,13 @@ async function call(action, extra){
       throw new Error(`後端回傳的不是資料（HTTP ${res.status}${t ? '：' + t : ''}）。請用無痕視窗打開 GAS_URL 檢查部署設定`);
     }
     if (!j.ok){
-      if (j.error === 'TOKEN_INVALID'){ if (liff.isInClient()) location.reload(); else { liff.logout(); liff.login({ redirectUri: location.href }); } return null; }
+      if (j.error === 'TOKEN_INVALID'){ if (liff.isInClient()) location.reload(); else { liff.logout(); liff.login({ redirectUri: location.href }); } return { ok:false, msg:'登入已過期，重新登入中…' }; }
       return { ok:false, msg:`${j.message}（${j.error}）`, code:j.error };
     }
     if (j.user) $('who').textContent = j.user.name;
     return j;
   }catch(e){ return { ok:false, msg:'連線失敗：' + (e.message || e) }; }
-  finally{ busy(false); }
+  finally{ if (block) busy(false); else if (--inflight <= 0) { inflight = 0; $('loadbar').hidden = true; } }
 }
 
 /* ---------------- 分頁 ---------------- */
@@ -263,18 +271,21 @@ async function switchTab(t){
   $('pane-list').hidden = t !== 'list';
   $('pane-settings').hidden = t !== 'settings';
   $('savebar').hidden = t !== 'settings';
-  if (t === 'settings'){ if (isDirty()) return; await loadSettings(); }
-  else { cur = clone(saved); await loadList(); }
+  if (t === 'settings'){ if (!saved) await loadSettings(); else { $('setBody').hidden = false; renderSettings(); } }
+  else { cur = clone(saved); if (!data) await loadList(); }
 }
 
 /* ================= 預約總覽 ================= */
+const FETCH_DAYS = 30;   // 一次抓 30 天，切換 1／7／30 天只在瀏覽器篩選，不再呼叫後端
 async function loadList(){
-  const j = await call('admin', { from: $('from').value, days });
+  const j = await call('admin', { from: $('from').value, days: FETCH_DAYS });
   if (!j.ok){ $('summary').textContent = ''; $('list').innerHTML = `<div class="err">${esc(j.msg)}</div>`; return; }
   data = j; renderList();
+  prefetchSettings();
 }
 function renderList(){
-  const list = data.bookings;
+  const end = ymd(new Date(data.from + 'T00:00:00+08:00').getTime() + days * 86400000);
+  const list = data.bookings.filter(b => b.date < end);
   $('summary').innerHTML = `共 <b>${list.length}</b> 筆預約　<span>（尚未開始 ${list.filter(b => !b.past).length} 筆）</span>`;
   if (!list.length){ $('list').innerHTML = '<section><div class="empty">這段期間沒有預約</div></section>'; return; }
   const today = ymd(Date.now()), by = {};
@@ -294,7 +305,7 @@ $('range').addEventListener('click', e => {
   const b = e.target.closest('[data-days]'); if (!b) return;
   days = Number(b.dataset.days);
   document.querySelectorAll('#range button').forEach(x => x.classList.toggle('on', x === b));
-  loadList();
+  if (data) renderList(); else loadList();
 });
 $('from').addEventListener('change', loadList);
 $('reload').addEventListener('click', loadList);
@@ -302,7 +313,7 @@ $('list').addEventListener('click', async e => {
   const btn = e.target.closest('[data-id]'); if (!btn) return;
   const b = data.bookings.find(x => x.id === btn.dataset.id); if (!b) return;
   if (!(await ask('取消這筆預約？', `<b>${esc(b.name)}</b>　${md(b.start)} ${hm(b.start)}–${hm(b.end)}<br>客人的「我的預約」會同步消失，請記得另外通知客人。`, '確定取消'))) return;
-  const j = await call('adminCancel', { eventId: b.id, from: $('from').value, days });
+  const j = await call('adminCancel', { eventId: b.id, from: $('from').value, days: FETCH_DAYS });
   if (!j.ok) return toast(j.msg);
   data = j; renderList(); toast('已取消');
 });
@@ -310,8 +321,13 @@ $('list').addEventListener('click', async e => {
 /* ================= 營業設定 ================= */
 const SLOT_OPTS = [15, 20, 30, 40, 45, 50, 60, 75, 90, 120, 150, 180];
 
+let settingsReq = null;
+function prefetchSettings(){ if (!saved && !settingsReq) loadSettings(); }
 async function loadSettings(){
-  const j = await call('getSettings', {});
+  if (settingsReq) return settingsReq;
+  settingsReq = call('getSettings', {});
+  const j = await settingsReq;
+  settingsReq = null;
   if (!j.ok){ $('setErr').innerHTML = `<div class="err">${esc(j.msg)}</div>`; $('setBody').hidden = true; $('savebar').hidden = true; return; }
   $('setErr').innerHTML = '';
   saved = norm(j.settings); cur = clone(saved);
