@@ -38,10 +38,10 @@
   .day{display:flex;justify-content:space-between;align-items:baseline;padding:10px 14px;background:#fafafa;border-bottom:1px solid var(--bd);font-weight:700}
   .day small{color:var(--sub);font-weight:400}
   .day.today{background:var(--g2)}
-  .row{display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 14px;border-top:1px solid var(--bd)}
+  .row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 14px;border-top:1px solid var(--bd)}
   .row:first-of-type{border-top:0}
   .row.past{opacity:.5}
-  .tm{font-weight:700;font-variant-numeric:tabular-nums}
+  .tm{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
   .nm{font-weight:600;overflow-wrap:anywhere}
   .nt{font-size:13px;color:var(--sub);overflow-wrap:anywhere;user-select:text}
 
@@ -82,6 +82,30 @@
   .savebar .st.dirty{color:var(--amber);font-weight:600}
   .savebar button{padding:10px 20px}
 
+  /* 師傅 */
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+  .tag{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--sub);margin-left:6px;white-space:nowrap}
+  .tag em{font-style:normal;font-weight:400}
+  .stf{padding:0;overflow:hidden}
+  .stf > summary{list-style:none;display:flex;align-items:center;gap:10px;padding:14px;cursor:pointer}
+  .stf > summary::-webkit-details-marker{display:none}
+  .stf > summary .dot{width:14px;height:14px}
+  .stf > summary b{font-size:16px}
+  .stf > summary .sm{color:var(--sub);font-size:13px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stf > summary::after{content:"▸";color:var(--sub);font-size:14px;transition:transform .15s}
+  .stf[open] > summary::after{transform:rotate(90deg)}
+  .seg button.on .dot{box-shadow:0 0 0 2px #fff}
+  .stf.off > summary b{color:var(--sub);text-decoration:line-through}
+  .stf .bd{padding:0 14px 14px;border-top:1px solid var(--bd)}
+  .stf h3{font-size:13px;color:var(--sub);margin:14px 0 6px;font-weight:600}
+  .stf input[type=text]{border:1px solid var(--bd);border-radius:8px;padding:6px 8px;background:#fff;width:100%;max-width:340px}
+  .stf .addrow input[type=date]{border:1px solid var(--bd);border-radius:8px;padding:5px 8px;background:#fff}
+  .colors{display:flex;gap:6px;flex-wrap:wrap}
+  .colors button{width:26px;height:26px;border-radius:50%;padding:0;border:2px solid #fff;box-shadow:0 0 0 1px var(--bd)}
+  .colors button.on{box-shadow:0 0 0 2px var(--tx)}
+  .tip{font-size:13px;color:var(--sub);margin:6px 0 0;padding-left:18px}
+  .tip li{margin:3px 0}
+  .tip code{background:var(--bg);border:1px solid var(--bd);border-radius:4px;padding:0 4px;color:var(--tx)}
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;z-index:10}
   .sheet{background:#fff;width:100%;border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
   .sheet h3{margin:0 0 6px;font-size:17px}
@@ -103,6 +127,7 @@
   <div class="hrow"><h1>預約管理</h1><div id="who"></div></div>
   <nav class="tabs" id="tabs">
     <button data-tab="list" class="on">預約總覽</button>
+    <button data-tab="staff">師傅排班</button>
     <button data-tab="settings">營業設定</button>
   </nav>
 </header>
@@ -118,6 +143,7 @@
     </div>
     <button id="reload">重新整理</button>
   </div>
+  <div class="bar" id="staffBar" hidden style="padding-top:0"><div class="seg" id="staffFilter"></div></div>
   <div class="summary" id="summary"></div>
   <div id="list"><div class="empty">載入中…</div></div>
 </div>
@@ -137,7 +163,7 @@
       <p class="desc">改完按下方「儲存」，客人下次開啟預約頁就會套用。</p>
       <div class="grid">
         <div class="fld"><label for="f-slot">每個時段長度</label><div class="in"><select id="f-slot"></select><span class="u">分鐘</span></div></div>
-        <div class="fld"><label for="f-cap">每個時段可預約人數</label><div class="in"><input type="number" id="f-cap" min="1" max="50"><span class="u">人</span></div></div>
+        <div class="fld"><label for="f-cap">每個時段可預約人數</label><div class="in"><input type="number" id="f-cap" min="1" max="50"><span class="u">人</span></div><div class="preview" id="capNote" hidden>已啟用師傅：每個時段可約人數＝當時有空的師傅數，這欄不使用</div></div>
         <div class="fld"><label for="f-hz">開放預約天數（含今天）</label><div class="in"><input type="number" id="f-hz" min="1" max="90"><span class="u">天</span></div><div class="preview" id="hzPrev"></div></div>
         <div class="fld"><label for="f-lead">最晚需提前多久預約</label><div class="in"><input type="number" id="f-lead" min="0" max="10080"><span class="u">分鐘</span></div></div>
         <div class="fld"><label for="f-cancel">開始前多久內不可取消/改期</label><div class="in"><input type="number" id="f-cancel" min="0" max="10080"><span class="u">分鐘</span></div></div>
@@ -169,6 +195,30 @@
       <p class="desc">某一天用不同的營業時間，或開放平常公休的日子。優先於每週營業時間；公休日最優先。</p>
       <div class="addrow"><input type="date" id="spIn" aria-label="新增特別營業日"><button id="spAdd">加入特別營業日</button></div>
       <div id="spList" style="margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 師傅排班 ============ -->
+<div id="pane-staff" hidden>
+  <div id="staffErr"></div>
+  <div id="staffBody" hidden>
+    <div class="card">
+      <h2>師傅</h2>
+      <p class="desc">有啟用的師傅時，客人預約要選師傅（或「不指定」）；每位師傅每個時段接 1 位客人。全部停用或刪除＝回到不分師傅。</p>
+      <label class="sw" for="f-any"><input type="checkbox" id="f-any"> 客人可選「不指定」，由系統安排有空的師傅</label>
+    </div>
+    <div id="staffList"></div>
+    <div class="card">
+      <div class="addrow"><input type="text" id="newStaff" maxlength="20" placeholder="師傅名字，例：阿明" style="border:1px solid var(--bd);border-radius:8px;padding:6px 8px;flex:1;min-width:0;max-width:240px"><button id="staffAdd" class="primary">＋ 新增師傅</button></div>
+    </div>
+    <div class="card">
+      <h2>臨時請假幾個小時？</h2>
+      <ul class="tip">
+        <li>在 Google 日曆「按摩預約」新增事件，<b>標題寫師傅名字</b>，例：<code>阿明 請假</code> → 只擋阿明那段時間</li>
+        <li>標題沒有任何師傅名字，例：<code>店休</code> → 擋全店</li>
+        <li>整天請假用上面每位師傅的「請假日」比較快</li>
+      </ul>
     </div>
   </div>
 </div>
@@ -211,6 +261,11 @@ const clone = o => JSON.parse(JSON.stringify(o));
 let idToken = '', days = 7, data = null;
 let saved = null, cur = null;   // 設定：已儲存 / 編輯中
 let remReady = false;           // 後端是否已設定 LINE_MESSAGING_TOKEN
+let staffSel = '';              // 預約總覽：篩選師傅
+const openStaff = new Set();    // 師傅分頁：展開中的卡片
+// Google 日曆事件顏色代號 → 色碼（預約事件會用這個顏色）
+const COLORS = {1:'#7986cb',2:'#33b679',3:'#8e24aa',4:'#e67c73',5:'#f6bf26',6:'#f4511e',7:'#039be5',8:'#616161',9:'#3f51b5',10:'#0b8043',11:'#d50000'};
+const COLOR_ORDER = ['7','2','5','4','3','6','9','10','1','11','8'];
 $('from').value = ymd(Date.now());
 
 /* LINE SDK 偶爾載入失敗（網路或擋廣告外掛），自動重試一次 */
@@ -234,7 +289,7 @@ async function main(){
     await liff.init({ liffId: LIFF_ID });
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
     idToken = liff.getIDToken();
-    if (location.hash === '#settings') switchTab('settings'); else await loadList();
+    if (location.hash === '#settings' || location.hash === '#staff') switchTab(location.hash.slice(1)); else await loadList();
   }catch(e){ $('list').innerHTML = `<div class="err">初始化失敗：${esc(e.message || e)}</div>`; }
 }
 
@@ -270,8 +325,9 @@ async function switchTab(t){
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('pane-list').hidden = t !== 'list';
   $('pane-settings').hidden = t !== 'settings';
-  $('savebar').hidden = t !== 'settings';
-  if (t === 'settings'){ if (!saved) await loadSettings(); else { $('setBody').hidden = false; renderSettings(); } }
+  $('pane-staff').hidden = t !== 'staff';
+  $('savebar').hidden = t === 'list' || !saved;
+  if (t !== 'list'){ if (!saved) await loadSettings(); else renderAll(); }
   else { cur = clone(saved); if (!data) await loadList(); }
 }
 
@@ -285,7 +341,14 @@ async function loadList(){
 }
 function renderList(){
   const end = ymd(new Date(data.from + 'T00:00:00+08:00').getTime() + days * 86400000);
-  const list = data.bookings.filter(b => b.date < end);
+  const staff = data.staff || [];
+  $('staffBar').hidden = !staff.length;
+  if (staff.length){
+    if (staffSel && !staff.some(s => s.id === staffSel)) staffSel = '';
+    $('staffFilter').innerHTML = `<button data-sf="" class="${staffSel ? '' : 'on'}">全部</button>` +
+      staff.map(s => `<button data-sf="${esc(s.id)}" class="${s.id === staffSel ? 'on' : ''}"><span class="dot" style="background:${COLORS[s.color] || '#999'}"></span> ${esc(s.name)}</button>`).join('');
+  }
+  const list = data.bookings.filter(b => b.date < end && (!staffSel || b.staff === staffSel));
   $('summary').innerHTML = `共 <b>${list.length}</b> 筆預約　<span>（尚未開始 ${list.filter(b => !b.past).length} 筆）</span>`;
   if (!list.length){ $('list').innerHTML = '<section><div class="empty">這段期間沒有預約</div></section>'; return; }
   const today = ymd(Date.now()), by = {};
@@ -296,7 +359,7 @@ function renderList(){
       ${by[d].map(b => `
         <div class="row ${b.past ? 'past' : ''}">
           <div class="tm">${hm(b.start)}–${hm(b.end)}</div>
-          <div><div class="nm">${esc(b.name)}</div>${b.note ? `<div class="nt">${esc(b.note)}</div>` : ''}</div>
+          <div><div class="nm">${esc(b.name)}${b.staffName ? `<span class="tag"><span class="dot" style="background:${staffColor(b.staff)}"></span>${esc(b.staffName)}${b.auto ? '<em>・系統安排</em>' : ''}</span>` : ''}</div>${b.note ? `<div class="nt">${esc(b.note)}</div>` : ''}</div>
           <button class="danger" data-id="${esc(b.id)}" ${b.past ? 'disabled' : ''}>取消</button>
         </div>`).join('')}
     </section>`).join('');
@@ -306,6 +369,11 @@ $('range').addEventListener('click', e => {
   days = Number(b.dataset.days);
   document.querySelectorAll('#range button').forEach(x => x.classList.toggle('on', x === b));
   if (data) renderList(); else loadList();
+});
+function staffColor(id){ const s = (data && data.staff || []).find(x => x.id === id); return s ? (COLORS[s.color] || '#999') : '#bbb'; }
+$('staffFilter').addEventListener('click', e => {
+  const b = e.target.closest('[data-sf]'); if (!b) return;
+  staffSel = b.dataset.sf; renderList();
 });
 $('from').addEventListener('change', loadList);
 $('reload').addEventListener('click', loadList);
@@ -328,11 +396,15 @@ async function loadSettings(){
   settingsReq = call('getSettings', {});
   const j = await settingsReq;
   settingsReq = null;
-  if (!j.ok){ $('setErr').innerHTML = `<div class="err">${esc(j.msg)}</div>`; $('setBody').hidden = true; $('savebar').hidden = true; return; }
-  $('setErr').innerHTML = '';
+  if (!j.ok){
+    $('setErr').innerHTML = $('staffErr').innerHTML = `<div class="err">${esc(j.msg)}</div>`;
+    $('setBody').hidden = $('staffBody').hidden = true; $('savebar').hidden = true; return;
+  }
+  $('setErr').innerHTML = $('staffErr').innerHTML = '';
   saved = norm(j.settings); cur = clone(saved);
-  $('setBody').hidden = false;
-  renderSettings();
+  $('setBody').hidden = $('staffBody').hidden = false;
+  $('savebar').hidden = !$('pane-list').hidden;
+  renderAll();
 }
 // 後端回傳 [["10:00","12:00"],...]；統一排序，方便比較是否有修改
 function norm(s){
@@ -342,6 +414,8 @@ function norm(s){
   o.reminderEnabled = !!o.reminderEnabled;
   o.reminderHour = Number.isInteger(o.reminderHour) ? o.reminderHour : 20;
   remReady = !!o.reminderReady; delete o.reminderReady;
+  o.anyStaff = o.anyStaff !== false;
+  o.staff = (o.staff || []).map(s => ({ id:s.id, name:s.name, on:s.on !== false, color:String(s.color || '1'), hours:s.hours || null, off:(s.off || []).slice().sort(), cal:s.cal || '' }));
   return o;
 }
 const isDirty = () => saved && cur && JSON.stringify(cur) !== JSON.stringify(saved);
@@ -356,7 +430,13 @@ function rangeRows(list, path){
       <button class="x" data-del="${path}" data-i="${i}" aria-label="刪除這段">✕</button>
     </div>`).join('');
 }
-function getList(path){ const [a, b] = path.split(':'); return a === 'h' ? cur.hours[b] : cur.specialDates[b]; }
+function getList(path){
+  const [a, b, c] = path.split(':');
+  if (a === 't') return staffOf(b).hours[c];
+  return a === 'h' ? cur.hours[b] : cur.specialDates[b];
+}
+const staffOf = id => cur.staff.find(s => s.id === id);
+function renderAll(){ renderSettings(); renderStaff(); }
 
 function renderSettings(){
   $('weekly').innerHTML = WEEK.map(([k, lbl]) => `
@@ -375,6 +455,8 @@ function renderSettings(){
   const opts = SLOT_OPTS.includes(cur.slotMinutes) ? SLOT_OPTS : SLOT_OPTS.concat(cur.slotMinutes).sort((a, b) => a - b);
   sel.innerHTML = opts.map(v => `<option value="${v}" ${v === cur.slotMinutes ? 'selected' : ''}>${v}</option>`).join('');
   $('f-cap').value = cur.capacity;
+  const staffOn = cur.staff.some(s => s.on);
+  $('f-cap').disabled = staffOn; $('capNote').hidden = !staffOn;
   $('f-hz').value = cur.horizonDays;
   $('f-lead').value = cur.minLeadMinutes;
   $('f-cancel').value = cur.minCancelMinutes;
@@ -413,29 +495,62 @@ function updateSaveBar(){
   $('save').disabled = !d; $('revert').disabled = !d;
 }
 
-// 時段輸入
-$('pane-settings').addEventListener('change', e => {
+// 時段輸入（營業設定、師傅排班共用）
+function onChange(e){
   const t = e.target;
   if (t.dataset.path){ getList(t.dataset.path)[t.dataset.i][t.dataset.k] = t.value; updateSaveBar(); return; }
+  if (t.dataset.field){
+    const st = staffOf(t.dataset.sid); if (!st) return;
+    if (t.dataset.field === 'on') st.on = t.checked;
+    else st[t.dataset.field] = t.value.trim();
+    renderAll(); return;
+  }
+  if (t.id === 'f-any'){ cur.anyStaff = t.checked; updateSaveBar(); return; }
   const map = { 'f-slot':'slotMinutes', 'f-cap':'capacity', 'f-hz':'horizonDays', 'f-lead':'minLeadMinutes', 'f-cancel':'minCancelMinutes', 'f-max':'maxActivePerUser' };
   if (map[t.id]){ cur[map[t.id]] = Number(t.value); if (t.id === 'f-hz') hzPreview(); updateSaveBar(); }
   if (t.id === 'f-full'){ cur.showFullSlots = t.checked; updateSaveBar(); }
   if (t.id === 'f-rem'){ cur.reminderEnabled = t.checked; updateSaveBar(); }
   if (t.id === 'f-remh'){ cur.reminderHour = Number(t.value); updateSaveBar(); }
-});
+}
+$('pane-settings').addEventListener('change', onChange);
+$('pane-staff').addEventListener('change', onChange);
 $('f-hz').addEventListener('input', hzPreview);
 
-// 按鈕
-$('pane-settings').addEventListener('click', e => {
+// 按鈕（營業設定、師傅排班共用）
+async function onClick(e){
   const b = e.target.closest('button'); if (!b) return;
   const ds = b.dataset;
-  if (ds.addr){
+  if (ds.sdel){
+    const st = staffOf(ds.sdel);
+    if (!(await ask(`刪除師傅「${esc(st.name)}」？`, '已經預約這位師傅的客人不會被取消，但之後無法再選他。只是暫時不排班的話，取消勾選「接受預約」即可。', '刪除'))) return;
+    cur.staff = cur.staff.filter(x => x.id !== ds.sdel); openStaff.delete(ds.sdel);
+  }
+  else if (ds.addr){
     const l = getList(ds.addr), last = l[l.length - 1];
     l.push(last ? [last[1], last[1] < '21:00' ? addH(last[1], 2) : '23:00'] : ['10:00', '18:00']);
   }
   else if (ds.del){ getList(ds.del).splice(Number(ds.i), 1); }
   else if (ds.clear){ getList(ds.clear).length = 0; }
   else if (ds.copy){ cur.hours[ds.copy] = clone(cur.hours.mon); }
+  else if (ds.tcopy){ const [id, k] = ds.tcopy.split(':'); staffOf(id).hours[k] = clone(staffOf(id).hours.mon); }
+  else if (ds.hmode){ staffOf(ds.sid).hours = ds.hmode === 'custom' ? (staffOf(ds.sid).hours || clone(cur.hours)) : null; }
+  else if (ds.color){ staffOf(ds.sid).color = ds.color; }
+  else if (ds.offadd){
+    const inp = document.querySelector(`[data-offin="${ds.offadd}"]`), v = inp.value;
+    if (!v) return toast('請先選日期');
+    if (v < ymd(Date.now())) return toast('不能選已經過去的日期');
+    const st = staffOf(ds.offadd); if (!st.off.includes(v)){ st.off.push(v); st.off.sort(); }
+  }
+  else if (ds.offdel){ const [id, d] = ds.offdel.split('|'); staffOf(id).off = staffOf(id).off.filter(x => x !== d); }
+  else if (b.id === 'staffAdd'){
+    const name = $('newStaff').value.trim();
+    if (!name) return toast('請輸入師傅名字');
+    if (cur.staff.some(x => x.name === name)) return toast('已經有同名的師傅');
+    const used = cur.staff.map(x => x.color);
+    const id = 's' + Date.now().toString(36);
+    cur.staff.push({ id, name, on:true, color: COLOR_ORDER.find(c => !used.includes(c)) || '1', hours:null, off:[], cal:'' });
+    openStaff.add(id); $('newStaff').value = '';
+  }
   else if (ds.unclose){ cur.closedDates = cur.closedDates.filter(d => d !== ds.unclose); }
   else if (ds.unsp){ delete cur.specialDates[ds.unsp]; }
   else if (b.id === 'closedAdd'){
@@ -451,8 +566,76 @@ $('pane-settings').addEventListener('click', e => {
     $('spIn').value = '';
   }
   else return;
-  renderSettings();
-});
+  renderAll();
+}
+$('pane-settings').addEventListener('click', onClick);
+$('pane-staff').addEventListener('click', onClick);
+$('newStaff').addEventListener('keydown', e => { if (e.key === 'Enter') $('staffAdd').click(); });
+$('staffList').addEventListener('toggle', e => {
+  const d = e.target; if (!d.dataset || !d.dataset.sid) return;
+  if (d.open) openStaff.add(d.dataset.sid); else openStaff.delete(d.dataset.sid);
+}, true);
+
+/* ---------------- 師傅排班 ---------------- */
+// 「一二三四五 10:00–18:00；六 10:00–14:00」
+function hoursSummary(st){
+  if (!st.hours) return '同店家營業時間';
+  const groups = [];
+  WEEK.forEach(([k, l]) => {
+    const r = st.hours[k]; if (!r.length) return;
+    const txt = r.map(x => x.join('–')).join('、');
+    const g = groups.find(x => x.txt === txt);
+    if (g) g.d += l.slice(1); else groups.push({ d: l.slice(1), txt });
+  });
+  return groups.length ? groups.map(g => `${g.d} ${g.txt}`).join('；') : '沒有排班';
+}
+function renderStaff(){
+  $('f-any').checked = cur.anyStaff;
+  $('staffList').innerHTML = cur.staff.length ? cur.staff.map(st => {
+    const id = esc(st.id);
+    return `
+    <details class="card stf ${st.on ? '' : 'off'}" data-sid="${id}" ${openStaff.has(st.id) ? 'open' : ''}>
+      <summary><span class="dot" style="background:${COLORS[st.color] || '#999'}"></span><b>${esc(st.name)}</b>
+        <span class="sm">${st.on ? esc(hoursSummary(st)) : '停用中（客人看不到）'}${st.off.length ? `・請假 ${st.off.length} 天` : ''}</span></summary>
+      <div class="bd">
+        <h3>名字</h3>
+        <input type="text" maxlength="20" value="${esc(st.name)}" data-field="name" data-sid="${id}">
+        <label class="sw" style="margin-top:10px"><input type="checkbox" data-field="on" data-sid="${id}" ${st.on ? 'checked' : ''}> 接受預約</label>
+
+        <h3>上班時間</h3>
+        <div class="seg" style="display:inline-flex">
+          <button data-hmode="store" data-sid="${id}" class="${st.hours ? '' : 'on'}">同店家營業時間</button>
+          <button data-hmode="custom" data-sid="${id}" class="${st.hours ? 'on' : ''}">自訂每週時間</button>
+        </div>
+        ${st.hours ? WEEK.map(([k, lbl]) => `
+          <div class="wk">
+            <div class="lbl">${lbl}</div>
+            <div>${rangeRows(st.hours[k], `t:${id}:${k}`).replace('>公休<', '>不上班<')}
+              <div class="acts">
+                <button class="ghost" data-addr="t:${id}:${k}">＋ 新增時段</button>
+                ${st.hours[k].length ? `<button class="ghost" data-clear="t:${id}:${k}">不上班</button>` : ''}
+                ${k !== 'mon' ? `<button class="ghost" data-tcopy="${id}:${k}">套用週一</button>` : ''}
+              </div>
+            </div>
+          </div>`).join('') : '<p class="preview">跟著「營業設定」的每週營業時間與特別營業日。</p>'}
+
+        <h3>請假日（整天）</h3>
+        <div class="addrow"><input type="date" data-offin="${id}" aria-label="請假日"><button data-offadd="${id}">加入請假日</button></div>
+        <div class="chips">${st.off.length ? st.off.map(d => `<span class="chip">${mdOf(d)}<button data-offdel="${id}|${d}" aria-label="移除">✕</button></span>`).join('') : '<span class="off">沒有請假日</span>'}</div>
+
+        <h3>日曆上的顏色</h3>
+        <div class="colors">${Object.keys(COLORS).map(c => `<button data-color="${c}" data-sid="${id}" class="${c === st.color ? 'on' : ''}" style="background:${COLORS[c]}" aria-label="顏色 ${c}"></button>`).join('')}</div>
+
+        <h3>私人日曆 ID（選填）</h3>
+        <input type="text" data-field="cal" data-sid="${id}" value="${esc(st.cal)}" placeholder="例：amin@gmail.com">
+        <p class="preview">師傅把自己的 Google 日曆共用給你（部署 Apps Script 的帳號）後填這裡；他私人行程的時間就不會被預約。</p>
+
+        <div class="acts" style="margin-top:14px"><button class="danger" data-sdel="${id}">刪除這位師傅</button></div>
+      </div>
+    </details>`;
+  }).join('') : '<div class="card"><span class="off">還沒有師傅，下面輸入名字新增。</span></div>';
+  updateSaveBar();
+}
 function addH(t, h){ const [a, b] = t.split(':').map(Number); return `${String(Math.min(a + h, 23)).padStart(2, '0')}:${String(b).padStart(2, '0')}`; }
 
 // 前端先檢查，錯誤直接指出是哪一天
@@ -468,6 +651,13 @@ function validate(s){
   };
   for (const [k, lbl] of WEEK){ const m = chk(s.hours[k], lbl); if (m) return m; }
   for (const d of Object.keys(s.specialDates)){ const m = chk(s.specialDates[d], mdOf(d)); if (m) return m; }
+  const names = new Set();
+  for (const st of s.staff){
+    if (!st.name) return '有師傅沒有名字';
+    if (names.has(st.name)) return `師傅名字重複：${st.name}`;
+    names.add(st.name);
+    if (st.hours) for (const [k, lbl] of WEEK){ const m = chk(st.hours[k], `${st.name} ${lbl}`); if (m) return m; }
+  }
   const rng = { capacity:[1,50,'每個時段人數'], horizonDays:[1,90,'開放天數'], minLeadMinutes:[0,10080,'提前預約'], minCancelMinutes:[0,10080,'取消截止'], maxActivePerUser:[1,50,'每人預約上限'] };
   for (const k in rng){ const v = s[k]; if (!Number.isInteger(v) || v < rng[k][0] || v > rng[k][1]) return `${rng[k][2]}需為 ${rng[k][0]}–${rng[k][1]} 的整數`; }
   return '';
@@ -478,13 +668,14 @@ $('save').addEventListener('click', async () => {
   const j = await call('saveSettings', { settings: cur });
   if (!j.ok) return toast(j.msg);
   saved = norm(j.settings); cur = clone(saved);
-  renderSettings(); toast('已儲存，客人重新開啟預約頁就會套用');
+  renderAll(); toast('已儲存，客人重新開啟預約頁就會套用');
+  if (data) loadList();   // 師傅名字／顏色可能改了
 });
 $('remTest').addEventListener('click', async () => {
   const j = await call('testPush', {});
   toast(j.ok ? '已送出，請到 LINE 查看官方帳號的訊息' : j.msg);
 });
-$('revert').addEventListener('click', () => { cur = clone(saved); renderSettings(); toast('已還原'); });
+$('revert').addEventListener('click', () => { cur = clone(saved); renderAll(); toast('已還原'); });
 window.addEventListener('beforeunload', e => { if (isDirty()){ e.preventDefault(); e.returnValue = ''; } });
 
 /* ---------------- 共用 UI ---------------- */

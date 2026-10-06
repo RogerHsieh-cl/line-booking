@@ -34,6 +34,12 @@
   .slot{padding:10px 0;font-weight:600}
   .slot.full{background:#f3f4f6;color:#9ca3af;font-weight:400}
   .slot.mine{background:var(--g2);border-color:var(--g);color:#047857}
+  .staffs{display:flex;gap:8px;flex-wrap:wrap}
+  .stf{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:99px}
+  .stf i{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .stf.on{background:var(--g);border-color:var(--g);color:#fff;font-weight:600}
+  .stf.on i{box-shadow:0 0 0 2px #fff}
+  #staffHint{font-size:12px;color:var(--sub);margin-top:8px}
   #banner{margin:12px;padding:10px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px}
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;z-index:10}
   .sheet{background:#fff;width:100%;border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
@@ -57,6 +63,12 @@
 </section>
 
 <div id="banner" hidden></div>
+
+<section id="staffSec" hidden>
+  <h2>選擇師傅</h2>
+  <div id="staffs" class="staffs"></div>
+  <div id="staffHint"></div>
+</section>
 
 <section>
   <h2 id="pickTitle">選擇時段</h2>
@@ -89,6 +101,9 @@ const TZ = 'Asia/Taipei';
 const WD = {Sun:'日',Mon:'一',Tue:'二',Wed:'三',Thu:'四',Fri:'五',Sat:'六'};
 const $ = id => document.getElementById(id);
 let idToken = '', state = null, selDate = null, moving = null;
+let selStaff = null;   // 師傅代號；'' = 不指定
+// Google 日曆事件顏色（與管理頁、日曆上的顏色一致）
+const COLORS = {1:'#7986cb',2:'#33b679',3:'#8e24aa',4:'#e67c73',5:'#f6bf26',6:'#f4511e',7:'#039be5',8:'#616161',9:'#3f51b5',10:'#0b8043',11:'#d50000'};
 
 /* ---------- 時間格式（固定台北時區，不受手機時區影響） ---------- */
 const dtf = new Intl.DateTimeFormat('en-US', {timeZone:TZ, hourCycle:'h23', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', weekday:'short'});
@@ -174,6 +189,7 @@ function render(){
     <div class="bk">
       <div>
         <div class="t">${range(b.start, b.end)}</div>
+        ${b.staffName ? `<div class="hint">師傅：${esc(b.staffName)}${b.auto ? '（店家安排）' : ''}</div>` : ''}
         ${b.canChange ? '' : `<div class="hint">開始前 ${state.config.minCancelMinutes} 分鐘內無法線上異動</div>`}
       </div>
       <div class="btns">
@@ -191,9 +207,20 @@ function render(){
   }
   $('pickTitle').textContent = moving ? '選擇新時段' : '選擇時段';
 
+  // 師傅
+  const cfg = state.config;
+  $('staffSec').hidden = !cfg.staffMode;
+  if (cfg.staffMode){
+    const ids = state.staff.map(s => s.id);
+    if (selStaff === null || (selStaff && !ids.includes(selStaff)) || (selStaff === '' && !cfg.anyStaff)) selStaff = cfg.anyStaff ? '' : (ids[0] || '');
+    const opts = (cfg.anyStaff ? [{ id:'', name:'不指定' }] : []).concat(state.staff);
+    $('staffs').innerHTML = opts.map(s => `<button class="stf ${s.id === selStaff ? 'on' : ''}" data-staff="${esc(s.id)}">${s.id ? `<i style="background:${COLORS[s.color] || '#999'}"></i>` : ''}${esc(s.name)}</button>`).join('');
+    $('staffHint').textContent = selStaff ? '' : '顯示所有師傅的空檔，由店家安排有空的師傅';
+  } else selStaff = '';
+
   // 日期 tabs
   const byDate = {};
-  state.slots.forEach(s => (byDate[s.date] = byDate[s.date] || []).push(s));
+  viewSlots().forEach(s => (byDate[s.date] = byDate[s.date] || []).push(s));
   const dates = Object.keys(byDate).sort();
   if (!dates.length){
     $('dates').innerHTML = ''; $('slots').innerHTML = '<div class="empty">目前沒有開放的時段</div>';
@@ -213,7 +240,28 @@ function render(){
   }).join('');
 }
 
+/* 選了特定師傅時，只看那位師傅的班表與空檔 */
+function viewSlots(){
+  let list = state.slots;
+  if (state.config.staffMode && selStaff){
+    list = list.filter(s => s.mine || s.w.includes(selStaff))
+      .map(s => Object.assign({}, s, { ok: !s.mine && s.f.includes(selStaff) }));
+  }
+  if (!state.config.showFullSlots) list = list.filter(s => s.ok || s.mine);
+  return list;
+}
+function staffLabel(){
+  if (!state.config.staffMode) return '';
+  const s = state.staff.find(x => x.id === selStaff);
+  return s ? s.name : '不指定（由店家安排）';
+}
+
 /* ---------- 事件 ---------- */
+$('staffs').addEventListener('click', e => {
+  const b = e.target.closest('[data-staff]'); if (!b) return;
+  selStaff = b.dataset.staff; render();
+});
+
 $('dates').addEventListener('click', e => {
   const b = e.target.closest('[data-date]'); if (!b) return;
   selDate = b.dataset.date; render();
@@ -223,14 +271,16 @@ $('slots').addEventListener('click', async e => {
   const b = e.target.closest('[data-start]'); if (!b) return;
   const start = Number(b.dataset.start), end = Number(b.dataset.end);
   if (moving){
-    const r = await sheet({ title:'確認改期', body:`${range(moving.start, moving.end)}<br>→ <b>${range(start, end)}</b>`, okText:'確認改期' });
+    const who = staffLabel();
+    const r = await sheet({ title:'確認改期', body:`${range(moving.start, moving.end)}<br>→ <b>${range(start, end)}</b>${who ? `<br>師傅：${esc(who)}` : ''}`, okText:'確認改期' });
     if (!r) return;
-    const j = await call('reschedule', { eventId: moving.id, start });
+    const j = await call('reschedule', { eventId: moving.id, start, staff: selStaff });
     if (j){ moving = null; done(j.done); render(); }
   }else{
-    const r = await sheet({ title:'確認預約', body:`<b>${range(start, end)}</b>`, note:true, okText:'確認預約' });
+    const who = staffLabel();
+    const r = await sheet({ title:'確認預約', body:`<b>${range(start, end)}</b>${who ? `<br>師傅：${esc(who)}` : ''}`, note:true, okText:'確認預約' });
     if (!r) return;
-    const j = await call('book', { start, note: r.note });
+    const j = await call('book', { start, note: r.note, staff: selStaff });
     if (j) done(j.done);
   }
 });
@@ -239,7 +289,13 @@ $('mine').addEventListener('click', async e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const bk = state.mine.find(x => x.id === b.dataset.id); if (!bk) return;
   if (b.dataset.act === 'move'){
-    moving = bk; render();
+    moving = bk;
+    if (state.config.staffMode){
+      // 改期預設看原本的師傅；原本是店家安排的就維持「不指定」
+      if (bk.auto && state.config.anyStaff) selStaff = '';
+      else if (state.staff.some(s => s.id === bk.staff)) selStaff = bk.staff;
+    }
+    render();
     window.scrollTo({ top: $('banner').offsetTop - 8, behavior:'smooth' });
   }else{
     const r = await sheet({ title:'取消預約', body:`確定取消 <b>${range(bk.start, bk.end)}</b>？`, okText:'確定取消', danger:true });
@@ -253,9 +309,9 @@ $('mine').addEventListener('click', async e => {
 async function done(d){
   if (!d) return;
   const label = { book:'✅ 預約成功', reschedule:'🔄 已改期', cancel:'❌ 已取消預約' }[d.action];
-  toast(label);
+  toast(d.staffName && d.action !== 'cancel' ? `${label}（師傅：${d.staffName}）` : label);
   if (!SEND_CHAT_CONFIRM || !liff.isInClient()) return;
-  try{ await liff.sendMessages([{ type:'text', text:`${label}\n${range(d.start, d.end)}` }]); }catch(_){ /* 非聊天室開啟或未授權 scope 時忽略 */ }
+  try{ await liff.sendMessages([{ type:'text', text:`${label}\n${range(d.start, d.end)}${d.staffName ? '\n師傅：' + d.staffName : ''}` }]); }catch(_){ /* 非聊天室開啟或未授權 scope 時忽略 */ }
 }
 
 /* ---------- UI helpers ---------- */
