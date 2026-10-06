@@ -208,9 +208,24 @@ let saved = null, cur = null;   // 設定：已儲存 / 編輯中
 let remReady = false;           // 後端是否已設定 LINE_MESSAGING_TOKEN
 $('from').value = ymd(Date.now());
 
+/* LINE SDK 偶爾載入失敗（網路或擋廣告外掛），自動重試一次 */
+const SDK_MSG = 'LINE 登入元件載入失敗。請重新整理；仍失敗請關閉擋廣告外掛、改用無痕視窗，或直接用手機 LINE 開啟。';
+function ensureLiffSdk(){
+  if (typeof liff !== 'undefined') return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://static.line-scdn.net/liff/edge/2/sdk.js?retry=' + Date.now();
+    s.onload = () => (typeof liff === 'undefined' ? reject(new Error(SDK_MSG)) : resolve());
+    s.onerror = () => reject(new Error(SDK_MSG));
+    document.head.appendChild(s);
+    setTimeout(() => reject(new Error(SDK_MSG)), 10000);
+  });
+}
+
 main();
 async function main(){
   try{
+    await ensureLiffSdk();
     await liff.init({ liffId: LIFF_ID });
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
     idToken = liff.getIDToken();
