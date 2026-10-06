@@ -98,12 +98,12 @@
   .stf.off > summary b{color:var(--sub);text-decoration:line-through}
   .stf .bd{padding:0 14px 14px;border-top:1px solid var(--bd)}
   .stf h3{font-size:13px;color:var(--sub);margin:14px 0 6px;font-weight:600}
-  .stf input[type=text]{border:1px solid var(--bd);border-radius:8px;padding:6px 8px;background:#fff;width:100%;max-width:340px}
+  .stf input[type=text]{display:block;border:1px solid var(--bd);border-radius:8px;padding:6px 8px;background:#fff;width:100%;max-width:520px}
   .stf .addrow input[type=date]{border:1px solid var(--bd);border-radius:8px;padding:5px 8px;background:#fff}
   .colors{display:flex;gap:6px;flex-wrap:wrap}
   .colors button{width:26px;height:26px;border-radius:50%;padding:0;border:2px solid #fff;box-shadow:0 0 0 1px var(--bd)}
   .colors button.on{box-shadow:0 0 0 2px var(--tx)}
-  .stf textarea{border:1px solid var(--bd);border-radius:8px;padding:6px 8px;background:#fff;width:100%;max-width:520px;font:inherit;resize:vertical;margin-top:6px}
+  .stf textarea{display:block;border:1px solid var(--bd);border-radius:8px;padding:6px 8px;background:#fff;width:100%;max-width:520px;font:inherit;resize:vertical;margin-top:6px}
   .ph{display:flex;gap:12px;align-items:center;margin-bottom:8px}
   .av{position:relative;width:72px;height:72px;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:26px;flex:none}
   .av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
@@ -318,6 +318,7 @@ async function call(action, extra){
     }
     if (!j.ok){
       if (j.error === 'TOKEN_INVALID'){ if (liff.isInClient()) location.reload(); else { liff.logout(); liff.login({ redirectUri: location.href }); } return { ok:false, msg:'登入已過期，重新登入中…' }; }
+      if (j.error === 'BAD_ACTION') return { ok:false, msg:'後端還是舊版：Code.gs 換新版後，管理部署作業 → ✏️ → 建立新版本 → 部署（BAD_ACTION）', code:j.error };
       return { ok:false, msg:`${j.message}（${j.error}）`, code:j.error };
     }
     if (j.user) $('who').textContent = j.user.name;
@@ -738,7 +739,7 @@ function ask(title, body, okText){
   });
 }
 function busy(on){ $('busy').hidden = !on; }
-let tt; function toast(m){ const t = $('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), 2800); }
+let tt; function toast(m){ const t = $('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), Math.max(2800, m.length * 120)); }
 </script>
 </body>
 </html>
