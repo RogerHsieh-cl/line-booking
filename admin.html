@@ -103,6 +103,14 @@
   .colors{display:flex;gap:6px;flex-wrap:wrap}
   .colors button{width:26px;height:26px;border-radius:50%;padding:0;border:2px solid #fff;box-shadow:0 0 0 1px var(--bd)}
   .colors button.on{box-shadow:0 0 0 2px var(--tx)}
+  .stf textarea{border:1px solid var(--bd);border-radius:8px;padding:6px 8px;background:#fff;width:100%;max-width:520px;font:inherit;resize:vertical;margin-top:6px}
+  .ph{display:flex;gap:12px;align-items:center;margin-bottom:8px}
+  .av{position:relative;width:72px;height:72px;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:26px;flex:none}
+  .av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .upl{display:inline-flex;align-items:center;font:inherit;border:1px solid var(--bd);background:#fff;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+  .upl input{display:none}
+  .stf details.more{margin-top:6px;font-size:13px;color:var(--sub)}
+  .stf details.more summary{cursor:pointer}
   .tip{font-size:13px;color:var(--sub);margin:6px 0 0;padding-left:18px}
   .tip li{margin:3px 0}
   .tip code{background:var(--bg);border:1px solid var(--bd);border-radius:4px;padding:0 4px;color:var(--tx)}
@@ -293,7 +301,7 @@ async function main(){
   }catch(e){ $('list').innerHTML = `<div class="err">初始化失敗：${esc(e.message || e)}</div>`; }
 }
 
-const WRITE_ACTIONS = ['adminCancel', 'saveSettings', 'testPush'];
+const WRITE_ACTIONS = ['adminCancel', 'saveSettings', 'testPush', 'uploadPhoto'];
 let inflight = 0;
 async function call(action, extra){
   const block = WRITE_ACTIONS.includes(action);
@@ -415,7 +423,7 @@ function norm(s){
   o.reminderHour = Number.isInteger(o.reminderHour) ? o.reminderHour : 20;
   remReady = !!o.reminderReady; delete o.reminderReady;
   o.anyStaff = o.anyStaff !== false;
-  o.staff = (o.staff || []).map(s => ({ id:s.id, name:s.name, on:s.on !== false, color:String(s.color || '1'), hours:s.hours || null, off:(s.off || []).slice().sort(), cal:s.cal || '' }));
+  o.staff = (o.staff || []).map(s => ({ id:s.id, name:s.name, on:s.on !== false, color:String(s.color || '1'), hours:s.hours || null, off:(s.off || []).slice().sort(), cal:s.cal || '', title:s.title || '', bio:s.bio || '', photo:s.photo || '' }));
   return o;
 }
 const isDirty = () => saved && cur && JSON.stringify(cur) !== JSON.stringify(saved);
@@ -498,6 +506,7 @@ function updateSaveBar(){
 // 時段輸入（營業設定、師傅排班共用）
 function onChange(e){
   const t = e.target;
+  if (t.dataset.photo){ uploadPhoto(t.dataset.photo, t.files[0]); t.value = ''; return; }
   if (t.dataset.path){ getList(t.dataset.path)[t.dataset.i][t.dataset.k] = t.value; updateSaveBar(); return; }
   if (t.dataset.field){
     const st = staffOf(t.dataset.sid); if (!st) return;
@@ -535,6 +544,7 @@ async function onClick(e){
   else if (ds.tcopy){ const [id, k] = ds.tcopy.split(':'); staffOf(id).hours[k] = clone(staffOf(id).hours.mon); }
   else if (ds.hmode){ staffOf(ds.sid).hours = ds.hmode === 'custom' ? (staffOf(ds.sid).hours || clone(cur.hours)) : null; }
   else if (ds.color){ staffOf(ds.sid).color = ds.color; }
+  else if (ds.unphoto){ staffOf(ds.unphoto).photo = ''; }
   else if (ds.offadd){
     const inp = document.querySelector(`[data-offin="${ds.offadd}"]`), v = inp.value;
     if (!v) return toast('請先選日期');
@@ -548,7 +558,7 @@ async function onClick(e){
     if (cur.staff.some(x => x.name === name)) return toast('已經有同名的師傅');
     const used = cur.staff.map(x => x.color);
     const id = 's' + Date.now().toString(36);
-    cur.staff.push({ id, name, on:true, color: COLOR_ORDER.find(c => !used.includes(c)) || '1', hours:null, off:[], cal:'' });
+    cur.staff.push({ id, name, on:true, color: COLOR_ORDER.find(c => !used.includes(c)) || '1', hours:null, off:[], cal:'', title:'', bio:'', photo:'' });
     openStaff.add(id); $('newStaff').value = '';
   }
   else if (ds.unclose){ cur.closedDates = cur.closedDates.filter(d => d !== ds.unclose); }
@@ -576,6 +586,33 @@ $('staffList').addEventListener('toggle', e => {
   if (d.open) openStaff.add(d.dataset.sid); else openStaff.delete(d.dataset.sid);
 }, true);
 
+/* ---------------- 師傅照片：先在瀏覽器縮到 800px 再上傳 ---------------- */
+function shrink(file){
+  return new Promise((resolve, reject) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, 800 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('讀不到這張圖片，請改用 JPG 或 PNG')); };
+    img.src = url;
+  });
+}
+async function uploadPhoto(id, file){
+  if (!file) return;
+  const st = staffOf(id); if (!st) return;
+  let data;
+  try { data = await shrink(file); } catch (e) { return toast(e.message); }
+  const j = await call('uploadPhoto', { data, name: st.name });
+  if (!j.ok) return toast(j.msg);
+  st.photo = j.url; renderAll();
+  toast('照片已上傳，按「儲存」後客人才看得到');
+}
+
 /* ---------------- 師傅排班 ---------------- */
 // 「一二三四五 10:00–18:00；六 10:00–14:00」
 function hoursSummary(st){
@@ -601,6 +638,18 @@ function renderStaff(){
         <h3>名字</h3>
         <input type="text" maxlength="20" value="${esc(st.name)}" data-field="name" data-sid="${id}">
         <label class="sw" style="margin-top:10px"><input type="checkbox" data-field="on" data-sid="${id}" ${st.on ? 'checked' : ''}> 接受預約</label>
+
+        <h3>介紹（客人選師傅時看得到）</h3>
+        <div class="ph">
+          <span class="av" style="background:${COLORS[st.color] || '#999'}">${esc(Array.from(st.name)[0] || '')}${st.photo ? `<img src="${esc(st.photo)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>
+          <div class="acts" style="margin:0">
+            <label class="upl">${st.photo ? '換照片' : '上傳照片'}<input type="file" accept="image/*" data-photo="${id}"></label>
+            ${st.photo ? `<button class="ghost" data-unphoto="${id}">移除照片</button>` : ''}
+          </div>
+        </div>
+        <input type="text" maxlength="40" value="${esc(st.title)}" data-field="title" data-sid="${id}" placeholder="一句話標題，例：男｜40多年整復經驗">
+        <textarea rows="3" maxlength="500" data-field="bio" data-sid="${id}" placeholder="例：手法特色：氣與力結合的深層調理，精準舒緩深層酸痛。">${esc(st.bio)}</textarea>
+        <details class="more"><summary>或貼上照片網址</summary><input type="text" value="${esc(st.photo)}" data-field="photo" data-sid="${id}" placeholder="https://…" style="margin-top:6px"></details>
 
         <h3>上班時間</h3>
         <div class="seg" style="display:inline-flex">

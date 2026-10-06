@@ -34,12 +34,23 @@
   .slot{padding:10px 0;font-weight:600}
   .slot.full{background:#f3f4f6;color:#9ca3af;font-weight:400}
   .slot.mine{background:var(--g2);border-color:var(--g);color:#047857}
-  .staffs{display:flex;gap:8px;flex-wrap:wrap}
-  .stf{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:99px}
-  .stf i{width:10px;height:10px;border-radius:50%;display:inline-block}
-  .stf.on{background:var(--g);border-color:var(--g);color:#fff;font-weight:600}
-  .stf.on i{box-shadow:0 0 0 2px #fff}
-  #staffHint{font-size:12px;color:var(--sub);margin-top:8px}
+  .staffs{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
+  .staffs::-webkit-scrollbar{display:none}
+  .stf{flex:0 0 92px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:12px;line-height:1.25}
+  .stf .nm{font-weight:600;font-size:14px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stf.on{border-color:var(--g);box-shadow:0 0 0 2px var(--g) inset;background:var(--g2)}
+  .stf.on .nm{color:#047857}
+  .av{position:relative;width:56px;height:56px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:20px;flex:none}
+  .av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .av.any{background:#e5e7eb;color:var(--sub)}
+  #staffInfo{margin-top:10px}
+  .intro{display:flex;gap:12px;align-items:flex-start;background:var(--bg);border-radius:12px;padding:12px}
+  .intro .av{width:84px;height:84px;border-radius:12px;font-size:30px}
+  .intro .tx{min-width:0}
+  .intro h3{margin:0;font-size:16px}
+  .intro .ti{font-size:13px;color:var(--sub);margin-top:2px}
+  .intro .bio{font-size:14px;margin-top:6px;white-space:pre-line;overflow-wrap:anywhere}
+  .hintline{font-size:12px;color:var(--sub)}
   #banner{margin:12px;padding:10px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px}
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;z-index:10}
   .sheet{background:#fff;width:100%;border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
@@ -67,7 +78,7 @@
 <section id="staffSec" hidden>
   <h2>選擇師傅</h2>
   <div id="staffs" class="staffs"></div>
-  <div id="staffHint"></div>
+  <div id="staffInfo"></div>
 </section>
 
 <section>
@@ -214,8 +225,10 @@ function render(){
     const ids = state.staff.map(s => s.id);
     if (selStaff === null || (selStaff && !ids.includes(selStaff)) || (selStaff === '' && !cfg.anyStaff)) selStaff = cfg.anyStaff ? '' : (ids[0] || '');
     const opts = (cfg.anyStaff ? [{ id:'', name:'不指定' }] : []).concat(state.staff);
-    $('staffs').innerHTML = opts.map(s => `<button class="stf ${s.id === selStaff ? 'on' : ''}" data-staff="${esc(s.id)}">${s.id ? `<i style="background:${COLORS[s.color] || '#999'}"></i>` : ''}${esc(s.name)}</button>`).join('');
-    $('staffHint').textContent = selStaff ? '' : '顯示所有師傅的空檔，由店家安排有空的師傅';
+    $('staffs').innerHTML = opts.map(s => `<button class="stf ${s.id === selStaff ? 'on' : ''}" data-staff="${esc(s.id)}">${avatar(s)}<span class="nm">${esc(s.name)}</span></button>`).join('');
+    const cur = state.staff.find(s => s.id === selStaff);
+    $('staffInfo').innerHTML = !cur ? '<div class="hintline">顯示所有師傅的空檔，由店家安排有空的師傅</div>'
+      : (cur.title || cur.bio || cur.photo) ? `<div class="intro">${avatar(cur)}<div class="tx"><h3>${esc(cur.name)}</h3>${cur.title ? `<div class="ti">${esc(cur.title)}</div>` : ''}${cur.bio ? `<div class="bio">${esc(cur.bio)}</div>` : ''}</div></div>` : '';
   } else selStaff = '';
 
   // 日期 tabs
@@ -238,6 +251,13 @@ function render(){
     if (!s.ok)  return `<button class="slot full" disabled>${hm(s.start)}<br><small>已滿</small></button>`;
     return `<button class="slot" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}</button>`;
   }).join('');
+}
+
+/* 頭像：有照片用照片，沒有（或載入失敗）顯示名字第一個字 */
+function avatar(s){
+  if (!s.id) return `<span class="av any"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.6"/><path d="M16 14.2c2.9.3 5 2.7 5 5.8"/></svg></span>`;
+  const bg = COLORS[s.color] || '#9ca3af';
+  return `<span class="av" style="background:${bg}">${esc(Array.from(s.name)[0] || '')}${s.photo ? `<img src="${esc(s.photo)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>`;
 }
 
 /* 選了特定師傅時，只看那位師傅的班表與空檔 */
