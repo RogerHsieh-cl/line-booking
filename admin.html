@@ -92,6 +92,8 @@
   .stf > summary .dot{width:14px;height:14px}
   .stf > summary b{font-size:16px}
   .stf > summary .sm{color:var(--sub);font-size:13px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mv{display:flex;gap:4px;flex:none}
+  .mv button{padding:2px 9px;font-size:14px;line-height:1.4;color:var(--sub)}
   .stf > summary::after{content:"▸";color:var(--sub);font-size:14px;transition:transform .15s}
   .stf[open] > summary::after{transform:rotate(90deg)}
   .seg button.on .dot{box-shadow:0 0 0 2px #fff}
@@ -213,7 +215,7 @@
   <div id="staffBody" hidden>
     <div class="card">
       <h2>師傅</h2>
-      <p class="desc">有啟用的師傅時，客人預約要選師傅（或「不指定」）；每位師傅每個時段接 1 位客人。全部停用或刪除＝回到不分師傅。</p>
+      <p class="desc">有啟用的師傅時，客人預約要選師傅（或「不指定」）；每位師傅每個時段接 1 位客人。全部停用或刪除＝回到不分師傅。用 ↑ ↓ 調整順序，客人看到的順序跟這裡一樣。</p>
       <label class="sw" for="f-any"><input type="checkbox" id="f-any"> 客人可選「不指定」，由系統安排有空的師傅</label>
     </div>
     <div id="staffList"></div>
@@ -530,6 +532,13 @@ $('f-hz').addEventListener('input', hzPreview);
 async function onClick(e){
   const b = e.target.closest('button'); if (!b) return;
   const ds = b.dataset;
+  if (ds.move){
+    e.preventDefault();   // 按鈕在 summary 裡，避免順便展開/收合卡片
+    const i = cur.staff.findIndex(x => x.id === ds.move), j = i + Number(ds.dir);
+    if (i < 0 || j < 0 || j >= cur.staff.length) return;
+    [cur.staff[i], cur.staff[j]] = [cur.staff[j], cur.staff[i]];
+    renderAll(); return;
+  }
   if (ds.sdel){
     const st = staffOf(ds.sdel);
     if (!(await ask(`刪除師傅「${esc(st.name)}」？`, '已經預約這位師傅的客人不會被取消，但之後無法再選他。只是暫時不排班的話，取消勾選「接受預約」即可。', '刪除'))) return;
@@ -629,12 +638,13 @@ function hoursSummary(st){
 }
 function renderStaff(){
   $('f-any').checked = cur.anyStaff;
-  $('staffList').innerHTML = cur.staff.length ? cur.staff.map(st => {
+  $('staffList').innerHTML = cur.staff.length ? cur.staff.map((st, i) => {
     const id = esc(st.id);
     return `
     <details class="card stf ${st.on ? '' : 'off'}" data-sid="${id}" ${openStaff.has(st.id) ? 'open' : ''}>
       <summary><span class="dot" style="background:${COLORS[st.color] || '#999'}"></span><b>${esc(st.name)}</b>
-        <span class="sm">${st.on ? esc(hoursSummary(st)) : '停用中（客人看不到）'}${st.off.length ? `・請假 ${st.off.length} 天` : ''}</span></summary>
+        <span class="sm">${st.on ? esc(hoursSummary(st)) : '停用中（客人看不到）'}${st.off.length ? `・請假 ${st.off.length} 天` : ''}</span>
+        <span class="mv"><button data-move="${id}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="往前移">↑</button><button data-move="${id}" data-dir="1" ${i === cur.staff.length - 1 ? 'disabled' : ''} aria-label="往後移">↓</button></span></summary>
       <div class="bd">
         <h3>名字</h3>
         <input type="text" maxlength="20" value="${esc(st.name)}" data-field="name" data-sid="${id}">
