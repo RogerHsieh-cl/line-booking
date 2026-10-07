@@ -19,7 +19,10 @@
   .bk:first-of-type{border-top:0}
   .bk .t{font-weight:600}
   .bk .hint{font-size:12px;color:var(--sub)}
-  .btns{display:flex;gap:6px}
+  .bk .hint.lock{color:#b45309}
+  button.muted{opacity:.45}
+  .btns{display:flex;gap:6px;flex:none;margin-left:8px}
+  .btns button{white-space:nowrap}
   button{font:inherit;border:1px solid var(--bd);background:#fff;border-radius:8px;padding:6px 12px;cursor:pointer}
   button:disabled{opacity:.4;cursor:default}
   .danger{color:var(--red);border-color:#fecaca}
@@ -206,11 +209,11 @@ function render(){
       <div>
         <div class="t">${range(b.start, b.end)}</div>
         ${b.staffName ? `<div class="hint">師傅：${esc(b.staffName)}${b.auto ? '（店家安排）' : ''}</div>` : ''}
-        ${b.canChange ? '' : `<div class="hint">開始前 ${state.config.minCancelMinutes} 分鐘內無法線上異動</div>`}
+        ${b.canChange ? '' : `<div class="hint lock">⚠️ 開始前 ${lockText()}內無法線上改期或取消，請直接聯繫店家</div>`}
       </div>
       <div class="btns">
-        <button data-act="move" data-id="${esc(b.id)}" ${b.canChange ? '' : 'disabled'}>改期</button>
-        <button data-act="cancel" data-id="${esc(b.id)}" class="danger" ${b.canChange ? '' : 'disabled'}>取消</button>
+        <button data-act="move" data-id="${esc(b.id)}" class="${b.canChange ? '' : 'muted'}">改期</button>
+        <button data-act="cancel" data-id="${esc(b.id)}" class="danger ${b.canChange ? '' : 'muted'}">取消</button>
       </div>
     </div>`).join('') : '<div class="empty">目前沒有預約</div>';
 
@@ -324,6 +327,10 @@ $('slots').addEventListener('click', async e => {
 $('mine').addEventListener('click', async e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const bk = state.mine.find(x => x.id === b.dataset.id); if (!bk) return;
+  if (!bk.canChange){
+    await sheet({ title:'無法線上改期或取消', body:`<b>${range(bk.start, bk.end)}</b><br>開始前 ${lockText()}內無法線上異動，請直接聯繫店家。`, okText:'知道了', single:true });
+    return;
+  }
   if (b.dataset.act === 'move'){
     moving = bk;
     const bkDur = Math.round((bk.end - bk.start) / 60000);
@@ -353,13 +360,18 @@ async function done(d){
 }
 
 /* ---------- UI helpers ---------- */
-function sheet({ title, body, note = false, okText = '確認', danger = false }){
+function lockText(){
+  const m = state.config.minCancelMinutes;
+  return m % 60 === 0 ? `${m / 60} 小時` : `${m} 分鐘`;
+}
+function sheet({ title, body, note = false, okText = '確認', danger = false, single = false }){
   return new Promise(resolve => {
     $('shTitle').textContent = title;
     $('shBody').innerHTML = body;
     $('shNote').hidden = !note; $('shNote').value = '';
     $('shOk').textContent = okText;
     $('shOk').className = danger ? 'danger' : 'primary';
+    $('shCancel').hidden = single;
     $('mask').hidden = false;
     const close = v => { $('mask').hidden = true; $('shOk').onclick = $('shCancel').onclick = $('mask').onclick = null; resolve(v); };
     $('shOk').onclick = () => close({ note: $('shNote').value.trim() });
