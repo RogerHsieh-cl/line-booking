@@ -173,6 +173,7 @@
       <p class="desc">改完按下方「儲存」，客人下次開啟預約頁就會套用。</p>
       <div class="grid">
         <div class="fld"><label for="f-slot">每次服務長度</label><div class="in"><select id="f-slot"></select><span class="u">分鐘</span></div></div>
+        <div class="fld" style="grid-column:1/-1"><label>客人可選的服務長度</label><div class="chips" id="f-durs" style="margin-top:0"></div><div class="preview">勾選多個，客人預約時先選時長（例：1 小時、1.5 小時）。「預設」＝上面的每次服務長度。</div></div>
         <div class="fld"><label for="f-step">開始時間間隔</label><div class="in"><select id="f-step"></select></div><div class="preview" id="stepPrev"></div></div>
         <div class="fld"><label for="f-cap">每個時段可預約人數</label><div class="in"><input type="number" id="f-cap" min="1" max="50"><span class="u">人</span></div><div class="preview" id="capNote" hidden>已啟用師傅：每個時段可約人數＝當時有空的師傅數，這欄不使用</div></div>
         <div class="fld"><label for="f-hz">開放預約天數（含今天）</label><div class="in"><input type="number" id="f-hz" min="1" max="90"><span class="u">天</span></div><div class="preview" id="hzPrev"></div></div>
@@ -428,6 +429,7 @@ function norm(s){
   remReady = !!o.reminderReady; delete o.reminderReady;
   o.anyStaff = o.anyStaff !== false;
   o.slotStepMinutes = Number.isInteger(o.slotStepMinutes) ? o.slotStepMinutes : 0;
+  o.durations = (Array.isArray(o.durations) && o.durations.length ? o.durations : [o.slotMinutes]).slice().sort((a, b) => a - b);
   o.staff = (o.staff || []).map(s => ({ id:s.id, name:s.name, on:s.on !== false, color:String(s.color || '1'), hours:s.hours || null, off:(s.off || []).slice().sort(), cal:s.cal || '', title:s.title || '', bio:s.bio || '', photo:s.photo || '' }));
   return o;
 }
@@ -470,6 +472,11 @@ function renderSettings(){
   const steps = [0, 15, 20, 30, 60].concat(STEP_EXTRA(cur.slotStepMinutes));
   $('f-step').innerHTML = steps.map(v => `<option value="${v}" ${v === cur.slotStepMinutes ? 'selected' : ''}>${v ? `每 ${v} 分鐘` : '同服務長度'}</option>`).join('');
   stepPreview();
+  const durOpts = Array.from(new Set([30, 45, 60, 90, 120, 150, 180].concat(cur.durations, cur.slotMinutes))).sort((a, b) => a - b);
+  $('f-durs').innerHTML = durOpts.map(d => {
+    const def = d === cur.slotMinutes, on = def || cur.durations.includes(d);
+    return `<label class="chip" style="padding:4px 12px;cursor:pointer"><input type="checkbox" data-dur="${d}" ${on ? 'checked' : ''} ${def ? 'disabled' : ''} style="accent-color:var(--g)"> ${durText(d)}${def ? '（預設）' : ''}</label>`;
+  }).join('');
   $('f-cap').value = cur.capacity;
   const staffOn = cur.staff.some(s => s.on);
   $('f-cap').disabled = staffOn; $('capNote').hidden = !staffOn;
@@ -498,6 +505,7 @@ function renderSettings(){
 
   updateSaveBar();
 }
+const durText = m => m % 30 === 0 && m >= 60 ? `${m / 60} 小時` : `${m} 分鐘`;
 const STEP_EXTRA = v => [0, 15, 20, 30, 60].includes(v) ? [] : [v];
 function stepPreview(){
   const d = cur.slotMinutes, st = cur.slotStepMinutes || d;
@@ -529,8 +537,19 @@ function onChange(e){
     renderAll(); return;
   }
   if (t.id === 'f-any'){ cur.anyStaff = t.checked; updateSaveBar(); return; }
+  if (t.dataset.dur){
+    const d = Number(t.dataset.dur);
+    cur.durations = t.checked ? Array.from(new Set(cur.durations.concat(d))).sort((a, b) => a - b) : cur.durations.filter(x => x !== d);
+    updateSaveBar(); return;
+  }
   const map = { 'f-slot':'slotMinutes', 'f-step':'slotStepMinutes', 'f-cap':'capacity', 'f-hz':'horizonDays', 'f-lead':'minLeadMinutes', 'f-cancel':'minCancelMinutes', 'f-max':'maxActivePerUser' };
-  if (map[t.id]){ cur[map[t.id]] = Number(t.value); if (t.id === 'f-hz') hzPreview(); if (t.id === 'f-slot' || t.id === 'f-step') stepPreview(); updateSaveBar(); }
+  if (map[t.id]){
+    cur[map[t.id]] = Number(t.value);
+    if (t.id === 'f-slot' && !cur.durations.includes(cur.slotMinutes)) cur.durations = cur.durations.concat(cur.slotMinutes).sort((a, b) => a - b);
+    if (t.id === 'f-hz') hzPreview();
+    if (t.id === 'f-slot') renderSettings(); else if (t.id === 'f-step') stepPreview();
+    updateSaveBar();
+  }
   if (t.id === 'f-full'){ cur.showFullSlots = t.checked; updateSaveBar(); }
   if (t.id === 'f-rem'){ cur.reminderEnabled = t.checked; updateSaveBar(); }
   if (t.id === 'f-remh'){ cur.reminderHour = Number(t.value); updateSaveBar(); }

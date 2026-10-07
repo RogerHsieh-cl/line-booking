@@ -50,6 +50,9 @@
   .intro h3{margin:0;font-size:16px}
   .intro .ti{font-size:13px;color:var(--sub);margin-top:2px}
   .intro .bio{font-size:14px;margin-top:6px;white-space:pre-line;overflow-wrap:anywhere}
+  .durs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .dur{padding:8px 14px;border-radius:99px;font-weight:600}
+  .dur.on{background:var(--g);border-color:var(--g);color:#fff}
   .hintline{font-size:12px;color:var(--sub)}
   #banner{margin:12px;padding:10px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px}
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;z-index:10}
@@ -83,6 +86,7 @@
 
 <section>
   <h2 id="pickTitle">選擇時段</h2>
+  <div id="durs" class="durs" hidden></div>
   <div id="dates" class="dates"></div>
   <div id="slots" class="slots"></div>
 </section>
@@ -113,6 +117,7 @@ const WD = {Sun:'日',Mon:'一',Tue:'二',Wed:'三',Thu:'四',Fri:'五',Sat:'六
 const $ = id => document.getElementById(id);
 let idToken = '', state = null, selDate = null, moving = null;
 let selStaff = null;   // 師傅代號；'' = 不指定
+let selDur = null;     // 服務長度（分鐘）
 // Google 日曆事件顏色（與管理頁、日曆上的顏色一致）
 const COLORS = {1:'#7986cb',2:'#33b679',3:'#8e24aa',4:'#e67c73',5:'#f6bf26',6:'#f4511e',7:'#039be5',8:'#616161',9:'#3f51b5',10:'#0b8043',11:'#d50000'};
 
@@ -231,6 +236,12 @@ function render(){
       : (cur.title || cur.bio || cur.photo) ? `<div class="intro">${avatar(cur)}<div class="tx"><h3>${esc(cur.name)}</h3>${cur.title ? `<div class="ti">${esc(cur.title)}</div>` : ''}${cur.bio ? `<div class="bio">${esc(cur.bio)}</div>` : ''}</div></div>` : '';
   } else selStaff = '';
 
+  // 服務長度
+  const durs = cfg.durations || [cfg.slotMinutes];
+  if (!durs.includes(selDur)) selDur = cfg.slotMinutes;
+  $('durs').hidden = durs.length < 2;
+  $('durs').innerHTML = durs.map(d => `<button class="dur ${d === selDur ? 'on' : ''}" data-dur="${d}">${durLabel(d)}</button>`).join('');
+
   // 日期 tabs
   const byDate = {};
   viewSlots().forEach(s => (byDate[s.date] = byDate[s.date] || []).push(s));
@@ -261,8 +272,9 @@ function avatar(s){
 }
 
 /* 選了特定師傅時，只看那位師傅的班表與空檔 */
+function durLabel(m){ return m % 30 === 0 && m >= 60 ? `${m / 60} 小時` : `${m} 分鐘`; }
 function viewSlots(){
-  let list = state.slots;
+  let list = (state.slotsBy && state.slotsBy[selDur]) || state.slots;
   if (state.config.staffMode && selStaff){
     list = list.filter(s => s.mine || s.w.includes(selStaff))
       .map(s => Object.assign({}, s, { ok: !s.mine && s.f.includes(selStaff) }));
@@ -277,6 +289,10 @@ function staffLabel(){
 }
 
 /* ---------- 事件 ---------- */
+$('durs').addEventListener('click', e => {
+  const b = e.target.closest('[data-dur]'); if (!b) return;
+  selDur = Number(b.dataset.dur); render();
+});
 $('staffs').addEventListener('click', e => {
   const b = e.target.closest('[data-staff]'); if (!b) return;
   selStaff = b.dataset.staff; render();
@@ -294,13 +310,13 @@ $('slots').addEventListener('click', async e => {
     const who = staffLabel();
     const r = await sheet({ title:'確認改期', body:`${range(moving.start, moving.end)}<br>→ <b>${range(start, end)}</b>${who ? `<br>師傅：${esc(who)}` : ''}`, okText:'確認改期' });
     if (!r) return;
-    const j = await call('reschedule', { eventId: moving.id, start, staff: selStaff });
+    const j = await call('reschedule', { eventId: moving.id, start, staff: selStaff, duration: selDur });
     if (j){ moving = null; done(j.done); render(); }
   }else{
     const who = staffLabel();
     const r = await sheet({ title:'確認預約', body:`<b>${range(start, end)}</b>${who ? `<br>師傅：${esc(who)}` : ''}`, note:true, okText:'確認預約' });
     if (!r) return;
-    const j = await call('book', { start, note: r.note, staff: selStaff });
+    const j = await call('book', { start, note: r.note, staff: selStaff, duration: selDur });
     if (j) done(j.done);
   }
 });
@@ -310,6 +326,8 @@ $('mine').addEventListener('click', async e => {
   const bk = state.mine.find(x => x.id === b.dataset.id); if (!bk) return;
   if (b.dataset.act === 'move'){
     moving = bk;
+    const bkDur = Math.round((bk.end - bk.start) / 60000);
+    if ((state.config.durations || []).includes(bkDur)) selDur = bkDur;   // 改期預設維持原本時長
     if (state.config.staffMode){
       // 改期預設看原本的師傅；原本是店家安排的就維持「不指定」
       if (bk.auto && state.config.anyStaff) selStaff = '';
