@@ -311,6 +311,53 @@ async function main(){
 }
 
 /* ---------- API ---------- */
+/* ---------- 呼叫 Apps Script：讀取類「避險請求」----------
+ * Google 入口偶爾卡 10～30 秒（後端其實 1 秒就算完），或把請求變成「開網址」只回版本資訊。
+ * 做法：送出後 HEDGE_MS 還沒回來就再送一次，誰先回來用誰（最多 tries 次）；
+ *       收到版本資訊（被轉成 GET）時，下一次改用 GET ?q= 帶資料，讓 doGet 也能處理。 */
+const HEDGE_MS = 6000;
+const isStub = j => !!(j && j.ok && j.service && !j.user && !j.settings && !j.bookings);
+function gasFetch(body, { tries = 1, hedgeMs = HEDGE_MS, timeoutMs = 20000 } = {}){
+  return new Promise((resolve, reject) => {
+    let started = 0, running = 0, settled = false, lastBad = null, sawStub = false, hedgeTimer = null;
+    const ctls = [], notes = [];
+    const finish = (fn, v) => {
+      if (settled) return; settled = true; clearTimeout(hedgeTimer);
+      ctls.forEach(c => { try{ c.abort(); }catch(_){} });
+      fn(v);
+    };
+    const start = () => {
+      clearTimeout(hedgeTimer);
+      if (settled || started >= tries) return;
+      if (running > 0) notes.push(`#${started} ${hedgeMs / 1000} 秒沒回，加送`);
+      const n = ++started, ac = new AbortController(); running++; ctls.push(ac);
+      const to = setTimeout(() => ac.abort(), timeoutMs);
+      if (started < tries) hedgeTimer = setTimeout(start, hedgeMs);
+      const useGet = sawStub && body.length < 6000;
+      const req = useGet ? fetch(GAS_URL + '?q=' + encodeURIComponent(body), { signal: ac.signal })
+                         : fetch(GAS_URL, { method:'POST', body, signal: ac.signal });
+      req.then(res => res.text().then(txt => {
+          let j = null; try{ j = JSON.parse(txt); }catch(_){}
+          if (j && !isStub(j)) return finish(resolve, { res, txt, j, n, notes });
+          if (isStub(j)) sawStub = true;
+          notes.push(`#${n}${useGet ? 'GET' : ''} ${j ? '回應不完整' : 'HTTP ' + res.status}`);
+          lastBad = { res, txt, j, n, notes };
+        }))
+        .catch(e => {
+          if (settled) return;
+          notes.push(`#${n}${useGet ? 'GET' : ''} ${e.name === 'AbortError' ? '逾時' : (e.message || e)}`);
+          if (!lastBad || lastBad.txt === undefined) lastBad = e;   // 有收到內容的失敗比較好判斷，優先保留
+        })
+        .finally(() => {
+          clearTimeout(to); running--;
+          if (settled) return;
+          if (started < tries) start();                 // 失敗了就馬上補送，不用等避險計時
+          else if (running === 0) finish(reject, lastBad);
+        });
+    };
+    start();
+  });
+}
 let lastFailRetryable = false, reqSeq = 0, appliedSeq = 0;
 async function call(action, extra = {}, isRetry = false){
   const seq = ++reqSeq;                     // 晚回來的舊回應（例如開頁讀取比預約晚到）不能蓋掉新結果
@@ -318,18 +365,20 @@ async function call(action, extra = {}, isRetry = false){
   lastFailRetryable = false;
   if (quiet){ initInFlight = true; if (pubApplied) $('mineSync').hidden = false; else $('loadbar').hidden = false; } else busy(true);
   let reload = false;
-  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), quiet ? 20000 : 30000);
   try{
     await liffReady;                        // 公開時段先出來時，客人可能比 LINE 登入更早點下去
     if (tokenExpired()){ relogin(); return null; }
     idToken = liff.getIDToken();
     // 不帶 Content-Type → text/plain，屬 simple request，GAS 不需處理 CORS preflight
     var tA = performance.now();
-    const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, fmt:2, ...extra }), signal: ctl.signal });
-    const txt = await res.text();
-    let j;
-    try { j = JSON.parse(txt); }
-    catch (_) {
+    // 讀取（init）：6 秒沒回應就同時再送一次，誰先回來用誰；預約／改期／取消只送一次
+    let r;
+    try{ r = await gasFetch(JSON.stringify({ action, idToken, fmt:2, ...extra }), quiet ? { tries:3, timeoutMs:20000 } : { tries:1, timeoutMs:30000 }); }
+    catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw bad; }
+    if (r.n > 1) queueLog({ what:action, result:`第 ${r.n} 次才成功`, ms:Math.round(performance.now() - tA), detail:r.notes.join('；') });
+    const res = r.res, txt = r.txt;
+    let j = r.j;
+    if (!j) {
       // 後端回傳 HTML（登入頁、授權頁、錯誤頁），把標題顯示出來方便判斷
       const t = ((txt.match(/<title>([^<]*)<\/title>/i) || [])[1] || '').trim();
       lastFailRetryable = quiet && !isRetry;
@@ -346,7 +395,7 @@ async function call(action, extra = {}, isRetry = false){
     }
     if (!j.user || !j.config){
       // 收到的不是預約資料（例如 Google 把請求轉成開網址，回了版本資訊 {"service":"line-booking"}）
-      queueLog({ what:action + (isRetry ? '（重試）' : ''), result:'回應不完整', ms:Math.round(performance.now() - tA), detail:`keys=${Object.keys(j).join(',')} ${j.service ? 'service=' + j.service + ' version=' + (j.version || '') : ''}` });
+      queueLog({ what:action + (isRetry ? '（重試）' : ''), result:'回應不完整', ms:Math.round(performance.now() - tA), detail:`keys=${Object.keys(j).join(',')} ${(r.notes || []).join('；')}` });
       if (quiet && !isRetry){ lastFailRetryable = true; return null; }
       fail('後端回應不完整，請重新整理'); return null;
     }
@@ -367,7 +416,6 @@ async function call(action, extra = {}, isRetry = false){
     fail(timeout ? `連線逾時（${quiet ? 20 : 30} 秒），請確認網路後重新整理` : '連線失敗：' + (e.message || e));
     return null;
   }finally{
-    clearTimeout(to);
     if (quiet){ initInFlight = false; $('loadbar').hidden = true; $('mineSync').hidden = true; } else busy(false);
     if (reload) setTimeout(() => call('init'), 0);
   }

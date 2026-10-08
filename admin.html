@@ -353,6 +353,53 @@ async function main(){
 
 const WRITE_ACTIONS = ['adminCancel', 'saveSettings', 'testPush', 'uploadPhoto'];
 let inflight = 0;
+/* ---------- 呼叫 Apps Script：讀取類「避險請求」----------
+ * Google 入口偶爾卡 10～30 秒（後端其實 1 秒就算完），或把請求變成「開網址」只回版本資訊。
+ * 做法：送出後 HEDGE_MS 還沒回來就再送一次，誰先回來用誰（最多 tries 次）；
+ *       收到版本資訊（被轉成 GET）時，下一次改用 GET ?q= 帶資料，讓 doGet 也能處理。 */
+const HEDGE_MS = 6000;
+const isStub = j => !!(j && j.ok && j.service && !j.user && !j.settings && !j.bookings);
+function gasFetch(body, { tries = 1, hedgeMs = HEDGE_MS, timeoutMs = 20000 } = {}){
+  return new Promise((resolve, reject) => {
+    let started = 0, running = 0, settled = false, lastBad = null, sawStub = false, hedgeTimer = null;
+    const ctls = [], notes = [];
+    const finish = (fn, v) => {
+      if (settled) return; settled = true; clearTimeout(hedgeTimer);
+      ctls.forEach(c => { try{ c.abort(); }catch(_){} });
+      fn(v);
+    };
+    const start = () => {
+      clearTimeout(hedgeTimer);
+      if (settled || started >= tries) return;
+      if (running > 0) notes.push(`#${started} ${hedgeMs / 1000} 秒沒回，加送`);
+      const n = ++started, ac = new AbortController(); running++; ctls.push(ac);
+      const to = setTimeout(() => ac.abort(), timeoutMs);
+      if (started < tries) hedgeTimer = setTimeout(start, hedgeMs);
+      const useGet = sawStub && body.length < 6000;
+      const req = useGet ? fetch(GAS_URL + '?q=' + encodeURIComponent(body), { signal: ac.signal })
+                         : fetch(GAS_URL, { method:'POST', body, signal: ac.signal });
+      req.then(res => res.text().then(txt => {
+          let j = null; try{ j = JSON.parse(txt); }catch(_){}
+          if (j && !isStub(j)) return finish(resolve, { res, txt, j, n, notes });
+          if (isStub(j)) sawStub = true;
+          notes.push(`#${n}${useGet ? 'GET' : ''} ${j ? '回應不完整' : 'HTTP ' + res.status}`);
+          lastBad = { res, txt, j, n, notes };
+        }))
+        .catch(e => {
+          if (settled) return;
+          notes.push(`#${n}${useGet ? 'GET' : ''} ${e.name === 'AbortError' ? '逾時' : (e.message || e)}`);
+          if (!lastBad || lastBad.txt === undefined) lastBad = e;   // 有收到內容的失敗比較好判斷，優先保留
+        })
+        .finally(() => {
+          clearTimeout(to); running--;
+          if (settled) return;
+          if (started < tries) start();                 // 失敗了就馬上補送，不用等避險計時
+          else if (running === 0) finish(reject, lastBad);
+        });
+    };
+    start();
+  });
+}
 async function call(action, extra){
   const block = WRITE_ACTIONS.includes(action);
   if (block) busy(true); else { inflight++; $('loadbar').hidden = false; }
@@ -361,27 +408,16 @@ async function call(action, extra){
     idToken = liff.getIDToken();
     var tA = performance.now();
     const body = JSON.stringify({ action, idToken, ...extra });
-    const tries = block ? 1 : 2;   // 讀取類：卡住或回傳怪東西就自動重試一次；寫入類不重試，避免重複執行
-    let j;
-    for (let i = 0; i < tries; i++){
-      const last = i === tries - 1, ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), block ? 60000 : 20000);
-      try{
-        const res = await fetch(GAS_URL, { method:'POST', body, signal: ac.signal });
-        const txt = await res.text();
-        try { j = JSON.parse(txt); }
-        catch (_) {
-          // 後端回傳 HTML（登入頁、授權頁、錯誤頁），把標題顯示出來方便判斷
-          const t = ((txt.match(/<title>([^<]*)<\/title>/i) || [])[1] || '').trim();
-          throw new Error(`後端回傳的不是資料（HTTP ${res.status}${t ? '：' + t : ''}）。請用無痕視窗打開 GAS_URL 檢查部署設定`);
-        }
-        if (j.service && !j.user && !last){ queueLog({ what:action, result:'回應不完整，重試', ms:Math.round(performance.now() - tA), detail:`keys=${Object.keys(j).join(',')}` }); continue; }
-        break;
-      }catch(e){
-        const msg = e.name === 'AbortError' ? '逾時（20 秒沒回應）' : String(e.message || e);
-        if (last) throw new Error(msg);
-        queueLog({ what:action, result:'第 1 次失敗，自動重試', ms:Math.round(performance.now() - tA), detail:msg });
-      }finally{ clearTimeout(timer); }
+    // 讀取類：6 秒沒回應就同時再送一次，誰先回來用誰；寫入類只送一次，避免重複執行
+    let r;
+    try{ r = await gasFetch(body, block ? { tries:1, timeoutMs:60000 } : { tries:3, hedgeMs:HEDGE_MS, timeoutMs:20000 }); }
+    catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw new Error(bad && bad.name === 'AbortError' ? '逾時（20 秒沒回應）' : String(bad && bad.message || bad)); }
+    if (r.n > 1) queueLog({ what:action, result:`第 ${r.n} 次才成功`, ms:Math.round(performance.now() - tA), detail:r.notes.join('；') });
+    let j = r.j;
+    if (!j){
+      // 後端回傳 HTML（登入頁、授權頁、錯誤頁），把標題顯示出來方便判斷
+      const t = ((r.txt.match(/<title>([^<]*)<\/title>/i) || [])[1] || '').trim();
+      throw new Error(`後端回傳的不是資料（HTTP ${r.res ? r.res.status : '?'}${t ? '：' + t : ''}）。請用無痕視窗打開 GAS_URL 檢查部署設定`);
     }
     if (!j.ok){
       if (j.error === 'TOKEN_INVALID'){ relogin(); return { ok:false, msg:'登入已過期，重新登入中…' }; }
@@ -389,8 +425,8 @@ async function call(action, extra){
       if (['SERVER_ERROR','CONFIG','BUSY','BAD_ACTION'].includes(j.error)) queueLog({ what:action, result:j.error, ms:Math.round(performance.now() - tA), detail:`${j.message} ${perfStr(j._perf)}` });
       return { ok:false, msg:`${j.message}（${j.error}）`, code:j.error };
     }
-    if (j.service && !j.user){
-      queueLog({ what:action, result:'回應不完整', ms:Math.round(performance.now() - tA), detail:`keys=${Object.keys(j).join(',')} version=${j.version || ''}` });
+    if (isStub(j)){
+      queueLog({ what:action, result:'回應不完整', ms:Math.round(performance.now() - tA), detail:`${r.notes.join('；')} version=${j.version || ''}` });
       return { ok:false, msg:'後端回應不完整，請重新整理' };
     }
     if (j.user) $('who').textContent = j.user.name;
