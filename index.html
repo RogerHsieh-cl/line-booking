@@ -316,7 +316,7 @@ async function main(){
  * 做法：送出後 HEDGE_MS 還沒回來就再送一次，誰先回來用誰（最多 tries 次）；
  *       收到版本資訊（被轉成 GET）時，下一次改用 GET ?q= 帶資料，讓 doGet 也能處理。 */
 const HEDGE_MS = 6000;
-const isStub = j => !!(j && j.ok && j.service && !j.user && !j.settings && !j.bookings);
+const isStub = j => !!(j && j.ok && j.service && !j.user && !j.settings && !j.bookings && !j.usage);
 function gasFetch(body, { tries = 1, hedgeMs = HEDGE_MS, timeoutMs = 20000 } = {}){
   return new Promise((resolve, reject) => {
     let started = 0, running = 0, settled = false, lastBad = null, sawStub = false, hedgeTimer = null;
