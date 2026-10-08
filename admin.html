@@ -372,6 +372,10 @@ async function call(action, extra){
       if (['SERVER_ERROR','CONFIG','BUSY','BAD_ACTION'].includes(j.error)) queueLog({ what:action, result:j.error, ms:Math.round(performance.now() - tA), detail:`${j.message} ${perfStr(j._perf)}` });
       return { ok:false, msg:`${j.message}（${j.error}）`, code:j.error };
     }
+    if (j.service && !j.user){
+      queueLog({ what:action, result:'回應不完整', ms:Math.round(performance.now() - tA), detail:`keys=${Object.keys(j).join(',')} version=${j.version || ''}` });
+      return { ok:false, msg:'後端回應不完整，請重新整理' };
+    }
     if (j.user) $('who').textContent = j.user.name;
     const apiMs = Math.round(performance.now() - tA);
     if (apiMs > SLOW_CLIENT_MS) queueLog({ what:action, result:'慢', ms:apiMs, detail:perfStr(j._perf) }); else flushLogs();

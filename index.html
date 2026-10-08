@@ -84,7 +84,7 @@
   <div id="mine"><div class="empty">載入中…</div></div>
 </section>
 
-<div id="slowhint" hidden><span>連線較慢，仍在讀取最新時段…</span><button onclick="location.reload()">重新整理</button></div>
+<div id="slowhint" hidden><span id="slowtxt">正在讀取最新時段，網路較慢時約需 10 秒…（灰色是上次的畫面）</span><button onclick="location.reload()">重新整理</button></div>
 <div id="errbox" hidden style="margin:12px;padding:10px 14px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:var(--red);font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span id="errmsg"></span><button onclick="location.reload()">重新整理</button></div>
 <div id="banner" hidden></div>
 
@@ -246,6 +246,7 @@ async function main(){
     if (!idToken) throw new Error('無法取得 ID token，請確認 LIFF scope 已勾選 openid');
     let j = await call('init');
     if (!j && lastFailRetryable){              // 網路斷線、Google 錯誤頁、逾時：自動再試一次
+      $('slowtxt').textContent = '第一次連線沒成功，自動重新連線中…'; $('slowhint').hidden = false;
       await new Promise(r => setTimeout(r, 800));
       j = await call('init', {}, true);
     }
@@ -295,6 +296,12 @@ async function call(action, extra = {}, isRetry = false){
       reload = !!state && ['SLOT_TAKEN','INVALID_SLOT','NOT_FOUND'].includes(j.error);
       return null;
     }
+    if (!j.user || !j.config){
+      // 收到的不是預約資料（例如 Google 把請求轉成開網址，回了版本資訊 {"service":"line-booking"}）
+      queueLog({ what:action + (isRetry ? '（重試）' : ''), result:'回應不完整', ms:Math.round(performance.now() - tA), detail:`keys=${Object.keys(j).join(',')} ${j.service ? 'service=' + j.service + ' version=' + (j.version || '') : ''}` });
+      if (quiet && !isRetry){ lastFailRetryable = true; return null; }
+      fail('後端回應不完整，請重新整理'); return null;
+    }
     const apiMs = Math.round(performance.now() - tA);
     if (action !== 'init' && apiMs > SLOW_CLIENT_MS) queueLog({ what:action, result:'慢', ms:apiMs, detail:perfStr(j._perf) });
     state = decodeView(j);
@@ -317,7 +324,7 @@ async function call(action, extra = {}, isRetry = false){
 
 /* ---------- Render ---------- */
 function render(){
-  $('who').textContent = state.user.name;
+  $('who').textContent = (state.user && state.user.name) || '';
 
   // 我的預約
   const mine = state.mine;
