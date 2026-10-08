@@ -68,6 +68,11 @@
   #toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:rgba(17,24,39,.92);color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
   #toast.show{opacity:1}
   #busy{position:fixed;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:30;font-size:14px;color:var(--sub)}
+  #loadbar{position:fixed;left:0;right:0;top:0;height:3px;z-index:40;overflow:hidden;pointer-events:none}
+  #loadbar::before{content:"";position:absolute;inset:0;width:40%;background:var(--g);animation:lb 1s ease-in-out infinite}
+  @keyframes lb{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+  body.stale #mine, body.stale #slots, body.stale #staffs, body.stale #durs, body.stale #dates{pointer-events:none;opacity:.6}
+  #slowhint{margin:12px;padding:10px 14px;border-radius:10px;background:#f3f4f6;font-size:13px;color:var(--sub);display:flex;justify-content:space-between;align-items:center;gap:8px}
   [hidden]{display:none!important}
 </style>
 </head>
@@ -79,6 +84,8 @@
   <div id="mine"><div class="empty">載入中…</div></div>
 </section>
 
+<div id="slowhint" hidden><span>連線較慢，仍在讀取最新時段…</span><button onclick="location.reload()">重新整理</button></div>
+<div id="errbox" hidden style="margin:12px;padding:10px 14px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:var(--red);font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span id="errmsg"></span><button onclick="location.reload()">重新整理</button></div>
 <div id="banner" hidden></div>
 
 <section id="staffSec" hidden>
@@ -107,6 +114,7 @@
 </div>
 <div id="toast"></div>
 <div id="busy" hidden>處理中…</div>
+<div id="loadbar" hidden></div>
 
 <script>
 /* ======== 部署時修改這三個值 ======== */
@@ -147,27 +155,65 @@ function ensureLiffSdk(){
   });
 }
 
+/* ---------- 上次的畫面先顯示（只存在這支手機），背景讀最新資料 ---------- */
+const CACHE_KEY = 'lb_view_v1';
+function loadCachedView(){
+  try{
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if (c && Date.now() - c.t < 12 * 3600000 && c.state && c.state.slots){ state = c.state; return true; }
+  }catch(_){ /* 無痕或停用儲存時略過 */ }
+  return false;
+}
+function saveCachedView(){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), state })); }catch(_){} }
+
+/* ---------- LINE 登入憑證過期：登出再登入拿新的（避免一直重新整理進不去） ---------- */
+function tokenExpired(){
+  try{ const d = liff.getDecodedIDToken(); return !d || !d.exp || d.exp * 1000 < Date.now() + 60000; }
+  catch(_){ return true; }
+}
+function relogin(){
+  let n = 0;
+  try{ n = Number(sessionStorage.getItem('lb_relogin') || 0); sessionStorage.setItem('lb_relogin', n + 1); }catch(_){}
+  if (n >= 2){
+    try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
+    throw new Error('LINE 登入狀態一直失效：請關閉這個頁面再從 LINE 重新開啟；仍不行請更新 LINE App');
+  }
+  liff.logout();
+  if (liff.isInClient()) location.reload();          // LINE 內開啟：重新整理時自動登入
+  else liff.login({ redirectUri: location.href });
+}
+
 main();
 async function main(){
+  if (loadCachedView()){ document.body.classList.add('stale'); render(); }
+  const slowTimer = setTimeout(() => { $('slowhint').hidden = false; }, 8000);
   try{
     await ensureLiffSdk();
     await liff.init({ liffId: LIFF_ID });
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    if (tokenExpired()) return relogin();
     idToken = liff.getIDToken();
     if (!idToken) throw new Error('無法取得 ID token，請確認 LIFF scope 已勾選 openid');
-    await call('init');
+    const j = await call('init');
+    if (j){ try{ sessionStorage.removeItem('lb_relogin'); }catch(_){} }
   }catch(e){
-    $('mine').innerHTML = `<div class="empty">初始化失敗：${esc(e.message || e)}</div>`;
+    fail('初始化失敗：' + (e.message || e));
+  }finally{
+    clearTimeout(slowTimer); $('slowhint').hidden = true;
   }
 }
 
 /* ---------- API ---------- */
 async function call(action, extra = {}){
-  busy(true);
+  const quiet = action === 'init';          // 讀取用細進度條，不擋整個畫面
+  if (quiet) $('loadbar').hidden = false; else busy(true);
   let reload = false;
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 30000);
   try{
+    if (tokenExpired()){ relogin(); return null; }
+    idToken = liff.getIDToken();
     // 不帶 Content-Type → text/plain，屬 simple request，GAS 不需處理 CORS preflight
-    const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, ...extra }) });
+    const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, ...extra }), signal: ctl.signal });
     const txt = await res.text();
     let j;
     try { j = JSON.parse(txt); }
@@ -177,23 +223,22 @@ async function call(action, extra = {}){
       throw new Error(`後端回傳的不是資料（HTTP ${res.status}${t ? '：' + t : ''}）。請用無痕視窗打開 GAS_URL 檢查部署設定`);
     }
     if (!j.ok){
-      if (j.error === 'TOKEN_INVALID'){
-        if (liff.isInClient()) location.reload();
-        else { liff.logout(); liff.login({ redirectUri: location.href }); }
-        return null;
-      }
+      if (j.error === 'TOKEN_INVALID'){ relogin(); return null; }
       fail(`${j.message || '發生錯誤'}（${j.error}）`);
       reload = !!state && ['SLOT_TAKEN','INVALID_SLOT','NOT_FOUND'].includes(j.error);
       return null;
     }
     state = j;
+    document.body.classList.remove('stale'); $('errbox').hidden = true;
     render();
+    saveCachedView();
     return j;
   }catch(e){
-    fail('連線失敗：' + (e.message || e));
+    fail(e.name === 'AbortError' ? '連線逾時（30 秒），請確認網路後重新整理' : '連線失敗：' + (e.message || e));
     return null;
   }finally{
-    busy(false);
+    clearTimeout(to);
+    if (quiet) $('loadbar').hidden = true; else busy(false);
     if (reload) setTimeout(() => call('init'), 0);
   }
 }
@@ -383,6 +428,7 @@ function busy(on){ $('busy').hidden = !on; }
 // 首次載入失敗時把錯誤固定顯示在頁面上（toast 會消失，不利除錯）
 function fail(msg){
   if (!state) $('mine').innerHTML = `<div class="empty" style="color:var(--red)">載入失敗：${esc(msg)}</div>`;
+  else if (document.body.classList.contains('stale')){ $('errmsg').textContent = '無法更新：' + msg; $('errbox').hidden = false; }
   toast(msg);
 }
 let toastTimer;

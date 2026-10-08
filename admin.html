@@ -294,13 +294,27 @@ function ensureLiffSdk(){
   });
 }
 
+function tokenExpired(){
+  try{ const d = liff.getDecodedIDToken(); return !d || !d.exp || d.exp * 1000 < Date.now() + 60000; }
+  catch(_){ return true; }
+}
+function relogin(){
+  let n = 0;
+  try{ n = Number(sessionStorage.getItem('lb_relogin') || 0); sessionStorage.setItem('lb_relogin', n + 1); }catch(_){}
+  if (n >= 2){ try{ sessionStorage.removeItem('lb_relogin'); }catch(_){} throw new Error('LINE 登入狀態一直失效：請關閉頁面重新開啟'); }
+  liff.logout();
+  if (liff.isInClient()) location.reload(); else liff.login({ redirectUri: location.href });
+}
+
 main();
 async function main(){
   try{
     await ensureLiffSdk();
     await liff.init({ liffId: LIFF_ID });
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    if (tokenExpired()) return relogin();
     idToken = liff.getIDToken();
+    try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
     if (location.hash === '#settings' || location.hash === '#staff') switchTab(location.hash.slice(1)); else await loadList();
   }catch(e){ $('list').innerHTML = `<div class="err">初始化失敗：${esc(e.message || e)}</div>`; }
 }
@@ -311,6 +325,8 @@ async function call(action, extra){
   const block = WRITE_ACTIONS.includes(action);
   if (block) busy(true); else { inflight++; $('loadbar').hidden = false; }
   try{
+    if (tokenExpired()){ relogin(); return { ok:false, msg:'登入已過期，重新登入中…' }; }
+    idToken = liff.getIDToken();
     const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, ...extra }) });
     const txt = await res.text();
     let j;
@@ -321,7 +337,7 @@ async function call(action, extra){
       throw new Error(`後端回傳的不是資料（HTTP ${res.status}${t ? '：' + t : ''}）。請用無痕視窗打開 GAS_URL 檢查部署設定`);
     }
     if (!j.ok){
-      if (j.error === 'TOKEN_INVALID'){ if (liff.isInClient()) location.reload(); else { liff.logout(); liff.login({ redirectUri: location.href }); } return { ok:false, msg:'登入已過期，重新登入中…' }; }
+      if (j.error === 'TOKEN_INVALID'){ relogin(); return { ok:false, msg:'登入已過期，重新登入中…' }; }
       if (j.error === 'BAD_ACTION') return { ok:false, msg:'後端還是舊版：Code.gs 換新版後，管理部署作業 → ✏️ → 建立新版本 → 部署（BAD_ACTION）', code:j.error };
       return { ok:false, msg:`${j.message}（${j.error}）`, code:j.error };
     }
