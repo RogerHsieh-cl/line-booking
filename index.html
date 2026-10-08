@@ -120,6 +120,8 @@
 /* ======== 部署時修改這三個值 ======== */
 const LIFF_ID = '2011839889-nTlHfdBE';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzOUACsp-0V7mQE8g1idgYgFWbnjc0Kpo0UIhK8tfVG8Fig2t9U8zk1uSsOfu9mk5mY/exec';
+// Firebase 公開時段網址：空白＝自動從後端取得（第一次開啟後記在手機裡）
+const PUB_URL = '';
 const SEND_CHAT_CONFIRM = true; // 完成後以使用者身分在聊天室送出確認訊息（需 chat_message.write scope，免費、不佔官方帳號訊息額度）
 /* =================================== */
 
@@ -233,13 +235,51 @@ function relogin(){
   else liff.login({ redirectUri: location.href });
 }
 
+/* ---------- Firebase 公開時段：不用等 Apps Script，1 秒內就有時段可以點 ---------- */
+let gasApplied = false, pubApplied = false, liffOk;
+const liffReady = new Promise(r => { liffOk = r; });
+function pubUrl(){ if (PUB_URL) return PUB_URL; try{ return localStorage.getItem('lb_pub_url') || ''; }catch(_){ return ''; } }
+async function loadPublic(){
+  const url = pubUrl(); if (!url) return;
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 8000), t = performance.now();
+  try{
+    const snap = await (await fetch(url, { cache:'no-store', signal: ctl.signal })).json();
+    MARK.pub = Math.round(performance.now() - T0);
+    if (!snap || snap.v !== 1 || !snap.slotsC || gasApplied) return;
+    state = mergePublic(snap);
+    pubApplied = true;
+    document.body.classList.remove('stale'); $('slowhint').hidden = true;
+    render();
+  }catch(e){
+    queueLog({ what:'讀取公開時段', result: e.name === 'AbortError' ? '逾時' : '失敗', ms:Math.round(performance.now() - t), detail:String(e.message || e) });
+  }finally{ clearTimeout(to); }
+}
+// 公開時段沒有「我的」資訊：用上次的我的預約補上（已約的時段標成我的、重疊的不能再約），並濾掉已來不及預約的時段
+function mergePublic(snap){
+  const j = decodeView(snap);
+  j.user = (state && state.user) || { name:'' };
+  j.mineUnknown = !(state && state.mine);         // 第一次開、沒有上次資料：我的預約等後端回來
+  j.mine = (state && state.mine) || [];
+  const earliest = Date.now() + (j.config.minLeadMinutes || 0) * 60000;
+  Object.keys(j.slotsBy).forEach(d => {
+    j.slotsBy[d] = j.slotsBy[d].filter(s => s.start >= earliest).map(s => {
+      const hit = j.mine.filter(b => b.start < s.end && b.end > s.start);
+      if (hit.length){ s.ok = false; s.mine = hit.some(b => b.start === s.start); }
+      return s;
+    });
+  });
+  j.slots = j.slotsBy[j.config.slotMinutes] || [];
+  return j;
+}
+
 main();
 async function main(){
   if (loadCachedView()){ document.body.classList.add('stale'); render(); }
-  const slowTimer = setTimeout(() => { $('slowhint').hidden = false; }, 8000);
+  const slowTimer = setTimeout(() => { if (!pubApplied) $('slowhint').hidden = false; }, 8000);
+  loadPublic();                                   // 跟 LINE 登入同時進行
   try{
     await ensureLiffSdk(); mark('sdk');
-    await liff.init({ liffId: LIFF_ID }); mark('liff');
+    await liff.init({ liffId: LIFF_ID }); mark('liff'); liffOk();
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
     if (tokenExpired()) return relogin();
     idToken = liff.getIDToken();
@@ -253,26 +293,31 @@ async function main(){
     mark('ready');
     if (j){
       try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
-      if (MARK.ready > SLOW_CLIENT_MS) queueLog({ what:'開頁', result:'慢', ms:MARK.ready, detail:`sdk=${MARK.sdk} liff=${MARK.liff - MARK.sdk} api=${MARK.ready - MARK.liff} ${perfStr(j._perf)}` });
+      try{ if (j.pubUrl) localStorage.setItem('lb_pub_url', j.pubUrl); else localStorage.removeItem('lb_pub_url'); }catch(_){}
+      const shown = MARK.pub && pubApplied ? MARK.pub : MARK.ready;   // 客人實際看到時段的時間
+      if (shown > SLOW_CLIENT_MS || MARK.ready > 3 * SLOW_CLIENT_MS) queueLog({ what:'開頁', result: shown > SLOW_CLIENT_MS ? '慢' : '我的預約慢', ms:shown, detail:`pub=${MARK.pub ?? '-'} sdk=${MARK.sdk} liff=${MARK.liff - MARK.sdk} api=${MARK.ready - MARK.liff} ${perfStr(j._perf)}` });
       else flushLogs();
     }
   }catch(e){
     fail('初始化失敗：' + (e.message || e));
     queueLog({ what:'開頁', result:'失敗', ms:Math.round(performance.now() - T0), detail:`${e.message || e} sdk=${MARK.sdk ?? '-'} liff=${MARK.liff ?? '-'}` });
   }finally{
+    liffOk();                                     // LINE 登入失敗也要放行，按鈕才會顯示錯誤而不是卡住
     clearTimeout(slowTimer); $('slowhint').hidden = true;
   }
 }
 
 /* ---------- API ---------- */
-let lastFailRetryable = false;
+let lastFailRetryable = false, reqSeq = 0, appliedSeq = 0;
 async function call(action, extra = {}, isRetry = false){
+  const seq = ++reqSeq;                     // 晚回來的舊回應（例如開頁讀取比預約晚到）不能蓋掉新結果
   const quiet = action === 'init';          // 讀取用細進度條，不擋整個畫面
   lastFailRetryable = false;
   if (quiet) $('loadbar').hidden = false; else busy(true);
   let reload = false;
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), quiet ? 20000 : 30000);
   try{
+    await liffReady;                        // 公開時段先出來時，客人可能比 LINE 登入更早點下去
     if (tokenExpired()){ relogin(); return null; }
     idToken = liff.getIDToken();
     // 不帶 Content-Type → text/plain，屬 simple request，GAS 不需處理 CORS preflight
@@ -304,6 +349,9 @@ async function call(action, extra = {}, isRetry = false){
     }
     const apiMs = Math.round(performance.now() - tA);
     if (action !== 'init' && apiMs > SLOW_CLIENT_MS) queueLog({ what:action, result:'慢', ms:apiMs, detail:perfStr(j._perf) });
+    if (quiet) gasApplied = true;
+    if (seq < appliedSeq) return j;
+    appliedSeq = seq;
     state = decodeView(j);
     document.body.classList.remove('stale'); $('errbox').hidden = true;
     render();
@@ -339,7 +387,7 @@ function render(){
         <button data-act="move" data-id="${esc(b.id)}" class="${b.canChange ? '' : 'muted'}">改期</button>
         <button data-act="cancel" data-id="${esc(b.id)}" class="danger ${b.canChange ? '' : 'muted'}">取消</button>
       </div>
-    </div>`).join('') : '<div class="empty">目前沒有預約</div>';
+    </div>`).join('') : `<div class="empty">${state.mineUnknown ? '讀取我的預約中…' : '目前沒有預約'}</div>`;
 
   // 改期提示
   if (moving && !mine.some(b => b.id === moving.id)) moving = null;
