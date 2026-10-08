@@ -141,6 +141,34 @@ const range = (s, e) => `${md(s)} ${hm(s)}–${hm(e)}`;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 /* ---------- 啟動 ---------- */
+const PAGE_NAME = 'index';
+/* ---------- 診斷回報：慢、失敗、重新登入 → 後端「系統紀錄」分頁 ---------- */
+const T0 = performance.now(), MARK = {};
+const mark = k => { MARK[k] = Math.round(performance.now() - T0); };
+const LOG_KEY = 'lb_pending_logs', SLOW_CLIENT_MS = 5000;
+function deviceInfo(){
+  let s = '';
+  try{ s = [liff.getOS(), liff.isInClient() ? 'LINE ' + (liff.getLineVersion() || '') : '外部瀏覽器'].join(' '); }catch(_){ s = '（LINE 元件未載入）'; }
+  const net = (navigator.connection || {}).effectiveType;
+  return `${s}${net ? ' ' + net : ''} | ${navigator.userAgent.slice(0, 90)}`;
+}
+const perfStr = p => p ? Object.keys(p).map(k => `${k}=${p[k]}`).join(' ') : '';
+function queueLog(l){
+  l.page = PAGE_NAME; l.device = deviceInfo(); l.id = Math.random().toString(36).slice(2, 12);   // 後端用來去除重送
+  l.detail = `at=${new Date().toTimeString().slice(0, 8)} ${l.detail || ''}`;
+  try{ const q = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); q.push(l); localStorage.setItem(LOG_KEY, JSON.stringify(q.slice(-10))); }catch(_){}
+  flushLogs();
+}
+// 送不出去就留在手機裡，下次再送
+function flushLogs(){
+  let q = [];
+  try{ q = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); }catch(_){}
+  if (!q.length) return;
+  fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action:'clientLog', idToken, logs:q }), keepalive:true })
+    .then(r => r.text()).then(t => { if (JSON.parse(t).ok) try{ localStorage.removeItem(LOG_KEY); }catch(_){} })
+    .catch(() => {});
+}
+
 /* LINE SDK 偶爾載入失敗（網路或擋廣告外掛），自動重試一次 */
 const SDK_MSG = 'LINE 登入元件載入失敗。請重新整理；仍失敗請關閉擋廣告外掛、改用無痕視窗，或直接用手機 LINE 開啟。';
 function ensureLiffSdk(){
@@ -178,6 +206,7 @@ function relogin(){
     try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
     throw new Error('LINE 登入狀態一直失效：請關閉這個頁面再從 LINE 重新開啟；仍不行請更新 LINE App');
   }
+  queueLog({ what:'重新登入', result:`LINE 憑證過期，第 ${n + 1} 次`, ms:0, detail:'' });
   liff.logout();
   if (liff.isInClient()) location.reload();          // LINE 內開啟：重新整理時自動登入
   else liff.login({ redirectUri: location.href });
@@ -188,16 +217,21 @@ async function main(){
   if (loadCachedView()){ document.body.classList.add('stale'); render(); }
   const slowTimer = setTimeout(() => { $('slowhint').hidden = false; }, 8000);
   try{
-    await ensureLiffSdk();
-    await liff.init({ liffId: LIFF_ID });
+    await ensureLiffSdk(); mark('sdk');
+    await liff.init({ liffId: LIFF_ID }); mark('liff');
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
     if (tokenExpired()) return relogin();
     idToken = liff.getIDToken();
     if (!idToken) throw new Error('無法取得 ID token，請確認 LIFF scope 已勾選 openid');
-    const j = await call('init');
-    if (j){ try{ sessionStorage.removeItem('lb_relogin'); }catch(_){} }
+    const j = await call('init'); mark('ready');
+    if (j){
+      try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
+      if (MARK.ready > SLOW_CLIENT_MS) queueLog({ what:'開頁', result:'慢', ms:MARK.ready, detail:`sdk=${MARK.sdk} liff=${MARK.liff - MARK.sdk} api=${MARK.ready - MARK.liff} ${perfStr(j._perf)}` });
+      else flushLogs();
+    }
   }catch(e){
     fail('初始化失敗：' + (e.message || e));
+    queueLog({ what:'開頁', result:'失敗', ms:Math.round(performance.now() - T0), detail:`${e.message || e} sdk=${MARK.sdk ?? '-'} liff=${MARK.liff ?? '-'}` });
   }finally{
     clearTimeout(slowTimer); $('slowhint').hidden = true;
   }
@@ -213,6 +247,7 @@ async function call(action, extra = {}){
     if (tokenExpired()){ relogin(); return null; }
     idToken = liff.getIDToken();
     // 不帶 Content-Type → text/plain，屬 simple request，GAS 不需處理 CORS preflight
+    var tA = performance.now();
     const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, ...extra }), signal: ctl.signal });
     const txt = await res.text();
     let j;
@@ -220,14 +255,18 @@ async function call(action, extra = {}){
     catch (_) {
       // 後端回傳 HTML（登入頁、授權頁、錯誤頁），把標題顯示出來方便判斷
       const t = ((txt.match(/<title>([^<]*)<\/title>/i) || [])[1] || '').trim();
+      queueLog({ what:action, result:`非 JSON HTTP ${res.status}`, ms:Math.round(performance.now() - tA), detail:t });
       throw new Error(`後端回傳的不是資料（HTTP ${res.status}${t ? '：' + t : ''}）。請用無痕視窗打開 GAS_URL 檢查部署設定`);
     }
     if (!j.ok){
       if (j.error === 'TOKEN_INVALID'){ relogin(); return null; }
+      if (['SERVER_ERROR','CONFIG','BUSY','BAD_ACTION'].includes(j.error)) queueLog({ what:action, result:j.error, ms:Math.round(performance.now() - tA), detail:`${j.message} ${perfStr(j._perf)}` });
       fail(`${j.message || '發生錯誤'}（${j.error}）`);
       reload = !!state && ['SLOT_TAKEN','INVALID_SLOT','NOT_FOUND'].includes(j.error);
       return null;
     }
+    const apiMs = Math.round(performance.now() - tA);
+    if (action !== 'init' && apiMs > SLOW_CLIENT_MS) queueLog({ what:action, result:'慢', ms:apiMs, detail:perfStr(j._perf) });
     state = j;
     document.body.classList.remove('stale'); $('errbox').hidden = true;
     render();
@@ -235,6 +274,7 @@ async function call(action, extra = {}){
     return j;
   }catch(e){
     fail(e.name === 'AbortError' ? '連線逾時（30 秒），請確認網路後重新整理' : '連線失敗：' + (e.message || e));
+    if (!/後端回傳的不是資料/.test(e.message || '')) queueLog({ what:action, result:e.name === 'AbortError' ? '逾時' : '連線失敗', ms:typeof tA === 'number' ? Math.round(performance.now() - tA) : 0, detail:String(e.message || e) });
     return null;
   }finally{
     clearTimeout(to);
