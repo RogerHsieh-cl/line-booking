@@ -68,6 +68,8 @@
   #toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:rgba(17,24,39,.92);color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
   #toast.show{opacity:1}
   #busy{position:fixed;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:30;font-size:14px;color:var(--sub)}
+  .sync{font-size:12px;font-weight:400;color:var(--sub);margin-left:6px;animation:blink 1.2s ease-in-out infinite}
+  @keyframes blink{50%{opacity:.35}}
   #loadbar{position:fixed;left:0;right:0;top:0;height:3px;z-index:40;overflow:hidden;pointer-events:none}
   #loadbar::before{content:"";position:absolute;inset:0;width:40%;background:var(--g);animation:lb 1s ease-in-out infinite}
   @keyframes lb{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
@@ -80,7 +82,7 @@
 <header><h1>線上預約</h1><div id="who"></div></header>
 
 <section>
-  <h2>我的預約</h2>
+  <h2>我的預約 <small id="mineSync" class="sync" hidden>同步中…</small></h2>
   <div id="mine"><div class="empty">載入中…</div></div>
 </section>
 
@@ -236,7 +238,7 @@ function relogin(){
 }
 
 /* ---------- Firebase 公開時段：不用等 Apps Script，1 秒內就有時段可以點 ---------- */
-let gasApplied = false, pubApplied = false, liffOk;
+let gasApplied = false, pubApplied = false, initInFlight = false, liffOk;
 const liffReady = new Promise(r => { liffOk = r; });
 function pubUrl(){ if (PUB_URL) return PUB_URL; try{ return localStorage.getItem('lb_pub_url') || ''; }catch(_){ return ''; } }
 async function loadPublic(){
@@ -248,6 +250,7 @@ async function loadPublic(){
     if (!snap || snap.v !== 1 || !snap.slotsC || gasApplied) return;
     state = mergePublic(snap);
     pubApplied = true;
+    if (initInFlight){ $('loadbar').hidden = true; $('mineSync').hidden = false; }   // 時段已是最新，只剩「我的預約」在背景同步
     document.body.classList.remove('stale'); $('slowhint').hidden = true;
     render();
   }catch(e){
@@ -313,7 +316,7 @@ async function call(action, extra = {}, isRetry = false){
   const seq = ++reqSeq;                     // 晚回來的舊回應（例如開頁讀取比預約晚到）不能蓋掉新結果
   const quiet = action === 'init';          // 讀取用細進度條，不擋整個畫面
   lastFailRetryable = false;
-  if (quiet) $('loadbar').hidden = false; else busy(true);
+  if (quiet){ initInFlight = true; if (pubApplied) $('mineSync').hidden = false; else $('loadbar').hidden = false; } else busy(true);
   let reload = false;
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), quiet ? 20000 : 30000);
   try{
@@ -365,7 +368,7 @@ async function call(action, extra = {}, isRetry = false){
     return null;
   }finally{
     clearTimeout(to);
-    if (quiet) $('loadbar').hidden = true; else busy(false);
+    if (quiet){ initInFlight = false; $('loadbar').hidden = true; $('mineSync').hidden = true; } else busy(false);
     if (reload) setTimeout(() => call('init'), 0);
   }
 }
