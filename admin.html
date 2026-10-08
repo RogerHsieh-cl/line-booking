@@ -434,8 +434,8 @@ async function call(action, extra){
     const body = JSON.stringify({ action, idToken, ...extra });
     // 讀取類：6 秒沒回應就同時再送一次，誰先回來用誰；寫入類只送一次，避免重複執行
     let r;
-    try{ r = await gasFetch(body, block ? { tries:1, timeoutMs:60000 } : { tries:3, hedgeMs:HEDGE_MS, timeoutMs:20000 }); }
-    catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw new Error(bad && bad.name === 'AbortError' ? '逾時（20 秒沒回應）' : String(bad && bad.message || bad)); }
+    try{ r = await gasFetch(body, block ? { tries:1, timeoutMs:60000 } : { tries:3, hedgeMs:HEDGE_MS, timeoutMs:45000 }); }
+    catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw new Error(bad && bad.name === 'AbortError' ? '逾時（45 秒沒回應）' : String(bad && bad.message || bad)); }
     if (r.n > 1) queueLog({ what:action, result:`第 ${r.n} 次才成功`, ms:Math.round(performance.now() - tA), detail:r.notes.join('；') });
     let j = r.j;
     if (!j){

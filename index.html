@@ -288,7 +288,8 @@ async function main(){
     idToken = liff.getIDToken();
     if (!idToken) throw new Error('無法取得 ID token，請確認 LIFF scope 已勾選 openid');
     let j = await call('init');
-    if (!j && lastFailRetryable){              // 網路斷線、Google 錯誤頁、逾時：自動再試一次
+    if (!j && lastFailRetryable && pubApplied) fail('讀不到我的預約');   // 已自動送了 3 次；時段已顯示，直接給「再試一次」按鈕
+    else if (!j && lastFailRetryable){         // 連時段都沒有：整輪再試一次
       $('slowtxt').textContent = '第一次連線沒成功，自動重新連線中…'; $('slowhint').hidden = false;
       await new Promise(r => setTimeout(r, 800));
       j = await call('init', {}, true);
@@ -373,7 +374,8 @@ async function call(action, extra = {}, isRetry = false){
     var tA = performance.now();
     // 讀取（init）：6 秒沒回應就同時再送一次，誰先回來用誰；預約／改期／取消只送一次
     let r;
-    try{ r = await gasFetch(JSON.stringify({ action, idToken, fmt:2, ...extra }), quiet ? { tries:3, timeoutMs:20000 } : { tries:1, timeoutMs:30000 }); }
+    // Google 入口有時 20 多秒才回，所以每次最多等 45 秒（背景讀取，不擋畫面）
+    try{ r = await gasFetch(JSON.stringify({ action, idToken, fmt:2, ...extra }), quiet ? { tries:3, timeoutMs:45000 } : { tries:1, timeoutMs:45000 }); }
     catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw bad; }
     if (r.n > 1) queueLog({ what:action, result:`第 ${r.n} 次才成功`, ms:Math.round(performance.now() - tA), detail:r.notes.join('；') });
     const res = r.res, txt = r.txt;
@@ -413,7 +415,7 @@ async function call(action, extra = {}, isRetry = false){
     const timeout = e.name === 'AbortError';
     if (!/後端回傳的不是資料/.test(e.message || '')) queueLog({ what:action + (isRetry ? '（重試）' : ''), result:timeout ? '逾時' : '連線失敗', ms:typeof tA === 'number' ? Math.round(performance.now() - tA) : 0, detail:String(e.message || e) });
     if (quiet && !isRetry){ lastFailRetryable = true; return null; }   // main() 會自動重試
-    fail(timeout ? `連線逾時（${quiet ? 20 : 30} 秒），請確認網路後重新整理` : '連線失敗：' + (e.message || e));
+    fail(timeout ? '連線逾時（45 秒），請確認網路後重新整理' : '連線失敗：' + (e.message || e));
     return null;
   }finally{
     if (quiet){ initInFlight = false; $('loadbar').hidden = true; $('mineSync').hidden = true; } else busy(false);
@@ -606,6 +608,11 @@ function busy(on){ $('busy').hidden = !on; }
 // 首次載入失敗時把錯誤固定顯示在頁面上（toast 會消失，不利除錯）
 function fail(msg){
   if (!state) $('mine').innerHTML = `<div class="empty" style="color:var(--red)">載入失敗：${esc(msg)}</div>`;
+  else if (state.mineUnknown){
+    // 時段已從 Firebase 顯示，只有「我的預約」沒拿到：明確告訴客人，並給重試按鈕（不要一直顯示讀取中）
+    $('mine').innerHTML = `<div class="empty" style="color:var(--red)">「我的預約」暫時讀不到（Google 忙碌或網路不穩）。<button id="mineRetry" style="margin-left:6px">再試一次</button><div class="hint">可以先選時段預約；送出時會重新確認。</div></div>`;
+    $('mineRetry').onclick = () => { $('mine').innerHTML = '<div class="empty">讀取我的預約中…</div>'; call('init', {}, true); };
+  }
   else if (document.body.classList.contains('stale')){ $('errmsg').textContent = '無法更新：' + msg; $('errbox').hidden = false; }
   toast(msg);
 }
