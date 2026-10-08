@@ -137,6 +137,8 @@ const dtf = new Intl.DateTimeFormat('en-US', {timeZone:TZ, hourCycle:'h23', mont
 function parts(ms){ const o = {}; dtf.formatToParts(new Date(ms)).forEach(p => o[p.type] = p.value); return o; }
 const hm = ms => { const p = parts(ms); return `${p.hour}:${p.minute}`; };
 const md = ms => { const p = parts(ms); return `${p.month}/${p.day}（${WD[p.weekday]}）`; };
+const dtfY = new Intl.DateTimeFormat('en-CA', {timeZone:TZ, year:'numeric', month:'2-digit', day:'2-digit'});
+const ymd = ms => dtfY.format(new Date(ms));   // yyyy-MM-dd（台北）
 const range = (s, e) => `${md(s)} ${hm(s)}–${hm(e)}`;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -188,11 +190,30 @@ const CACHE_KEY = 'lb_view_v1';
 function loadCachedView(){
   try{
     const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
-    if (c && Date.now() - c.t < 12 * 3600000 && c.state && c.state.slots){ state = c.state; return true; }
+    if (c && Date.now() - c.t < 12 * 3600000 && c.raw){ state = decodeView(JSON.parse(c.raw)); return !!state.slots; }
   }catch(_){ /* 無痕或停用儲存時略過 */ }
   return false;
 }
-function saveCachedView(){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), state })); }catch(_){} }
+function saveCachedView(raw){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), raw })); }catch(_){} }
+
+/* 後端精簡格式（fmt=2）：「分鐘.旗標.當班.有空」→ 一般時段物件 */
+function decodeView(j){
+  if (!j.slotsC) return j;
+  const ids = (j.staff || []).map(s => s.id), days = {};
+  const bits = n => ids.filter((_, i) => Math.floor(n / Math.pow(2, i)) % 2);
+  j.slotsBy = {};
+  Object.keys(j.slotsC).forEach(d => {
+    const dm = Number(d) * 60000;
+    j.slotsBy[d] = j.slotsC[d] ? j.slotsC[d].split(',').map(x => {
+      const p = x.split('.').map(Number), start = j.base + p[0] * 60000, di = Math.floor(p[0] / 1440);
+      const o = { start, end: start + dm, date: days[di] || (days[di] = ymd(j.base + di * 86400000 + 43200000)), ok: !!(p[1] & 1), mine: !!(p[1] & 2) };
+      if (p.length > 2){ o.w = bits(p[2]); o.f = bits(p[3]); }
+      return o;
+    }) : [];
+  });
+  j.slots = j.slotsBy[j.config.slotMinutes] || [];
+  return j;
+}
 
 /* ---------- LINE 登入憑證過期：登出再登入拿新的（避免一直重新整理進不去） ---------- */
 function tokenExpired(){
@@ -223,7 +244,12 @@ async function main(){
     if (tokenExpired()) return relogin();
     idToken = liff.getIDToken();
     if (!idToken) throw new Error('無法取得 ID token，請確認 LIFF scope 已勾選 openid');
-    const j = await call('init'); mark('ready');
+    let j = await call('init');
+    if (!j && lastFailRetryable){              // 網路斷線、Google 錯誤頁、逾時：自動再試一次
+      await new Promise(r => setTimeout(r, 800));
+      j = await call('init', {}, true);
+    }
+    mark('ready');
     if (j){
       try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
       if (MARK.ready > SLOW_CLIENT_MS) queueLog({ what:'開頁', result:'慢', ms:MARK.ready, detail:`sdk=${MARK.sdk} liff=${MARK.liff - MARK.sdk} api=${MARK.ready - MARK.liff} ${perfStr(j._perf)}` });
@@ -238,24 +264,28 @@ async function main(){
 }
 
 /* ---------- API ---------- */
-async function call(action, extra = {}){
+let lastFailRetryable = false;
+async function call(action, extra = {}, isRetry = false){
   const quiet = action === 'init';          // 讀取用細進度條，不擋整個畫面
+  lastFailRetryable = false;
   if (quiet) $('loadbar').hidden = false; else busy(true);
   let reload = false;
-  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 30000);
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), quiet ? 20000 : 30000);
   try{
     if (tokenExpired()){ relogin(); return null; }
     idToken = liff.getIDToken();
     // 不帶 Content-Type → text/plain，屬 simple request，GAS 不需處理 CORS preflight
     var tA = performance.now();
-    const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, ...extra }), signal: ctl.signal });
+    const res = await fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action, idToken, fmt:2, ...extra }), signal: ctl.signal });
     const txt = await res.text();
     let j;
     try { j = JSON.parse(txt); }
     catch (_) {
       // 後端回傳 HTML（登入頁、授權頁、錯誤頁），把標題顯示出來方便判斷
       const t = ((txt.match(/<title>([^<]*)<\/title>/i) || [])[1] || '').trim();
-      queueLog({ what:action, result:`非 JSON HTTP ${res.status}`, ms:Math.round(performance.now() - tA), detail:t });
+      lastFailRetryable = quiet && !isRetry;
+      queueLog({ what:action + (isRetry ? '（重試）' : ''), result:`非 JSON HTTP ${res.status}`, ms:Math.round(performance.now() - tA), detail:t });
+      if (lastFailRetryable) return null;     // 先別顯示錯誤，main() 會自動重試
       throw new Error(`後端回傳的不是資料（HTTP ${res.status}${t ? '：' + t : ''}）。請用無痕視窗打開 GAS_URL 檢查部署設定`);
     }
     if (!j.ok){
@@ -267,14 +297,16 @@ async function call(action, extra = {}){
     }
     const apiMs = Math.round(performance.now() - tA);
     if (action !== 'init' && apiMs > SLOW_CLIENT_MS) queueLog({ what:action, result:'慢', ms:apiMs, detail:perfStr(j._perf) });
-    state = j;
+    state = decodeView(j);
     document.body.classList.remove('stale'); $('errbox').hidden = true;
     render();
-    saveCachedView();
+    saveCachedView(txt);
     return j;
   }catch(e){
-    fail(e.name === 'AbortError' ? '連線逾時（30 秒），請確認網路後重新整理' : '連線失敗：' + (e.message || e));
-    if (!/後端回傳的不是資料/.test(e.message || '')) queueLog({ what:action, result:e.name === 'AbortError' ? '逾時' : '連線失敗', ms:typeof tA === 'number' ? Math.round(performance.now() - tA) : 0, detail:String(e.message || e) });
+    const timeout = e.name === 'AbortError';
+    if (!/後端回傳的不是資料/.test(e.message || '')) queueLog({ what:action + (isRetry ? '（重試）' : ''), result:timeout ? '逾時' : '連線失敗', ms:typeof tA === 'number' ? Math.round(performance.now() - tA) : 0, detail:String(e.message || e) });
+    if (quiet && !isRetry){ lastFailRetryable = true; return null; }   // main() 會自動重試
+    fail(timeout ? `連線逾時（${quiet ? 20 : 30} 秒），請確認網路後重新整理` : '連線失敗：' + (e.message || e));
     return null;
   }finally{
     clearTimeout(to);
