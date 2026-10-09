@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com">
+<link rel="dns-prefetch" href="https://script.googleusercontent.com">
 <title>線上預約</title>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
@@ -275,6 +278,8 @@ function mergePublic(snap){
   return j;
 }
 
+/* 開頁就先「敲門」：不帶資料的 GET 只回版本資訊，讓手機先建好到 Google 的連線、喚醒後端，真正的請求就少等一段 */
+try{ fetch(GAS_URL, { cache:'no-store' }).catch(() => {}); }catch(_){}
 main();
 async function main(){
   if (loadCachedView()){ document.body.classList.add('stale'); render(); }

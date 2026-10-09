@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com">
+<link rel="dns-prefetch" href="https://script.googleusercontent.com">
 <title>預約管理</title>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
@@ -361,6 +364,8 @@ function relogin(){
   if (liff.isInClient()) location.reload(); else liff.login({ redirectUri: location.href });
 }
 
+/* 開頁就先「敲門」：不帶資料的 GET 只回版本資訊，讓手機先建好到 Google 的連線、喚醒後端，真正的請求就少等一段 */
+try{ fetch(GAS_URL, { cache:'no-store' }).catch(() => {}); }catch(_){}
 main();
 async function main(){
   try{
@@ -370,8 +375,13 @@ async function main(){
     if (tokenExpired()) return relogin();
     idToken = liff.getIDToken();
     try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
-    if (['#settings', '#staff', '#usage'].includes(location.hash)) switchTab(location.hash.slice(1));
-    else { showCachedList(); await loadList(); }
+    showCachedList(); showCachedSettings();
+    const fbOk = await loadFromFirebase();          // 秘密連結：約 1 秒，不用等 Apps Script
+    const tab = ['#settings', '#staff', '#usage'].includes(location.hash) ? location.hash.slice(1) : '';
+    if (tab) switchTab(tab);
+    if (!fbOk) await loadList();                    // 第一次用這支手機、或金鑰換過：走 Apps Script（會順便拿到新連結）
+    else if (Date.now() - fbAt > 3 * 60000) loadList();   // 快照超過 3 分鐘：背景補拿最新，畫面先用快照
+    else flushLogs();
   }catch(e){ $('list').innerHTML = `<div class="err">初始化失敗：${esc(e.message || e)}</div>`; }
 }
 
@@ -425,7 +435,8 @@ function gasFetch(body, { tries = 1, hedgeMs = HEDGE_MS, timeoutMs = 20000 } = {
   });
 }
 async function call(action, extra){
-  const block = WRITE_ACTIONS.includes(action) || !!(extra && extra.mail);   // 寄信不能重送
+  const write = WRITE_ACTIONS.includes(action) || !!(extra && extra.mail);   // 寫入、寄信不能重送
+  const block = write && action !== 'adminCancel';                         // 取消預約在背景跑，不擋畫面
   if (block) busy(true); else { inflight++; $('loadbar').hidden = false; }
   try{
     if (tokenExpired()){ relogin(); return { ok:false, msg:'登入已過期，重新登入中…' }; }
@@ -434,7 +445,7 @@ async function call(action, extra){
     const body = JSON.stringify({ action, idToken, ...extra });
     // 讀取類：6 秒沒回應就同時再送一次，誰先回來用誰；寫入類只送一次，避免重複執行
     let r;
-    try{ r = await gasFetch(body, block ? { tries:1, timeoutMs:60000 } : { tries:3, hedgeMs:HEDGE_MS, timeoutMs:45000 }); }
+    try{ r = await gasFetch(body, write ? { tries:1, timeoutMs:60000 } : { tries:3, hedgeMs:HEDGE_MS, timeoutMs:45000 }); }
     catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw new Error(bad && bad.name === 'AbortError' ? '逾時（45 秒沒回應）' : String(bad && bad.message || bad)); }
     if (r.n > 1) queueLog({ what:action, result:`第 ${r.n} 次才成功`, ms:Math.round(performance.now() - tA), detail:r.notes.join('；') });
     let j = r.j;
@@ -474,8 +485,8 @@ async function switchTab(t){
   $('pane-staff').hidden = t !== 'staff';
   $('pane-usage').hidden = t !== 'usage';
   $('savebar').hidden = t === 'list' || t === 'usage' || !saved;
-  if (t === 'usage'){ if (!usage) await loadUsage(); }
-  else if (t !== 'list'){ if (!saved) await loadSettings(); else renderAll(); }
+  if (t === 'usage'){ if (!usage) await loadUsage(); else renderUsage(); }
+  else if (t !== 'list'){ if (!saved) await loadSettings(); else { renderAll(); if (settingsStale) prefetchSettings(); } }
   else { cur = clone(saved); if (!data) await loadList(); }
 }
 
@@ -501,15 +512,53 @@ function saveCachedList(j){
     localStorage.setItem(ADM_CACHE, JSON.stringify({ sub, at: Date.now(), from: $('from').value, data: d }));
   }catch(_){}
 }
+/* ---------- 後台快照（Firebase 秘密連結）----------
+ * 後端每分鐘把「預約清單、設定、用量」寫到 Firebase 一個只有管理者知道的隨機路徑；
+ * 連結第一次由 Apps Script 交給已驗證的管理者，存在這支手機（綁 LINE 帳號）。之後開後台直接讀，約 1 秒。 */
+const ADM_PUB = 'lb_adm_pub';
+let fbAt = 0, savedVer = '';
+function admPubUrl(){ try{ const c = JSON.parse(localStorage.getItem(ADM_PUB) || 'null'); return c && c.sub && c.sub === mySub() ? c.url : ''; }catch(_){ return ''; } }
+function rememberAdmPub(url){
+  try{
+    const sub = mySub();
+    if (url && sub) localStorage.setItem(ADM_PUB, JSON.stringify({ sub, url }));
+    else if (url === '') localStorage.removeItem(ADM_PUB);
+  }catch(_){}
+}
+async function loadFromFirebase(){
+  const url = admPubUrl(); if (!url) return false;
+  const ac = new AbortController(), to = setTimeout(() => ac.abort(), 8000), t = performance.now();
+  try{
+    const snap = await (await fetch(url, { cache:'no-store', signal: ac.signal })).json();
+    if (!snap || snap.v !== 1 || !snap.data){ rememberAdmPub(''); return false; }   // 金鑰換過（舊路徑已刪）：改走 Apps Script 拿新的
+    const d = JSON.parse(snap.data);
+    fbAt = snap.t || Date.now();
+    if (!$('from').value || $('from').value === d.from){
+      d.bookings.forEach(b => { b.past = b.end <= Date.now(); });
+      data = { from: d.from, days: d.days, bookings: d.bookings, staff: d.staff, usageLevel: d.usageLevel };
+      staleAt = 0; saveCachedList(data); renderList(); usageBadge(d.usageLevel);
+    }
+    if (d.settings && !isDirty()) applySettings(d.settings);
+    if (d.usage){ usage = d.usage; usageBadge(usage.level); if (!$('pane-usage').hidden) renderUsage(); }
+    const ms = Math.round(performance.now() - t);
+    if (ms > SLOW_CLIENT_MS) queueLog({ what:'讀取後台快照', result:'慢', ms, detail:'' });
+    return true;
+  }catch(e){
+    queueLog({ what:'讀取後台快照', result: e.name === 'AbortError' ? '逾時' : '失敗', ms:Math.round(performance.now() - t), detail:String(e.message || e) });
+    return false;
+  }finally{ clearTimeout(to); }
+}
 const ago = t => { const m = Math.floor((Date.now() - t) / 60000); return m < 1 ? '剛剛' : m < 60 ? `${m} 分鐘前` : m < 1440 ? `${Math.floor(m / 60)} 小時前` : `${Math.floor(m / 1440)} 天前`; };
 async function loadList(){
-  const j = await call('admin', { from: $('from').value, days: FETCH_DAYS });
+  const j = await call('admin', { from: $('from').value, days: FETCH_DAYS, withSettings: !saved || settingsStale });
   if (!j.ok){
     if (data && staleAt){ const s = $('summary').querySelector('.stale'); if (s) s.remove(); $('summary').insertAdjacentHTML('beforeend', `<div class="err">更新失敗：${esc(j.msg)}。目前顯示的是${ago(staleAt)}的資料，請按重新整理再試</div>`); return; }
     $('summary').textContent = ''; $('list').innerHTML = `<div class="err">${esc(j.msg)}</div>`; return;
   }
-  data = j; staleAt = 0; saveCachedList(j); renderList(); usageBadge(j.usageLevel);
-  prefetchSettings();
+  if (j.settings){ applySettings(j.settings); delete j.settings; }
+  if ('admPub' in j){ rememberAdmPub(j.admPub); delete j.admPub; }
+  data = j; staleAt = 0; fbAt = 0; saveCachedList(j); renderList(); usageBadge(j.usageLevel);
+  prefetchSettings();   // 舊版後端沒附設定時才會另外拿
 }
 function renderList(){
   const end = ymd(new Date(data.from + 'T00:00:00+08:00').getTime() + days * 86400000);
@@ -522,7 +571,8 @@ function renderList(){
   }
   const list = data.bookings.filter(b => b.date < end && (!staffSel || b.staff === staffSel));
   $('summary').innerHTML = `共 <b>${list.length}</b> 筆預約　<span>（尚未開始 ${list.filter(b => !b.past).length} 筆）</span>` +
-    (staleAt ? `<div class="stale">⏳ 顯示${ago(staleAt)}的資料，正在更新…</div>` : '');
+    (staleAt ? `<div class="stale">⏳ 顯示${ago(staleAt)}的資料，正在更新…</div>` :
+     fbAt ? `<div class="stale" style="color:var(--sub)">資料同步於${ago(fbAt)}（有預約、取消會在 1 分鐘內自動更新；要最新可按「重新整理」）</div>` : '');
   if (!list.length){ $('list').innerHTML = '<section><div class="empty">這段期間沒有預約</div></section>'; return; }
   const today = ymd(Date.now()), by = {};
   list.forEach(b => (by[b.date] = by[b.date] || []).push(b));
@@ -554,9 +604,17 @@ $('list').addEventListener('click', async e => {
   const btn = e.target.closest('[data-id]'); if (!btn) return;
   const b = data.bookings.find(x => x.id === btn.dataset.id); if (!b) return;
   if (!(await ask('取消這筆預約？', `<b>${esc(b.name)}</b>　${md(b.start)} ${hm(b.start)}–${hm(b.end)}<br>客人的「我的預約」會同步消失，請記得另外通知客人。`, '確定取消'))) return;
+  // 先從畫面拿掉（不用等 Google），背景送出；失敗再放回來
+  const idx = data.bookings.indexOf(b);
+  data.bookings.splice(idx, 1); renderList(); toast('取消中…（背景處理）');
   const j = await call('adminCancel', { eventId: b.id, from: $('from').value, days: FETCH_DAYS });
-  if (!j.ok) return toast(j.msg);
-  data = j; staleAt = 0; saveCachedList(j); renderList(); toast('已取消');
+  if (!j.ok){
+    if (!data.bookings.some(x => x.id === b.id)) data.bookings.splice(Math.min(idx, data.bookings.length), 0, b);
+    renderList(); return toast('取消失敗，已放回清單：' + j.msg);
+  }
+  if (j.settings) delete j.settings;
+  if ('admPub' in j){ rememberAdmPub(j.admPub); delete j.admPub; }
+  data = j; staleAt = 0; fbAt = 0; saveCachedList(j); renderList(); toast(`已取消：${b.name} ${md(b.start)} ${hm(b.start)}`);
 });
 
 /* ================= 用量（免費額度） ================= */
@@ -595,22 +653,42 @@ $('usageMail').addEventListener('click', () => loadUsage(true));
 /* ================= 營業設定 ================= */
 const SLOT_OPTS = [15, 20, 30, 40, 45, 50, 60, 75, 90, 120, 150, 180];
 
-let settingsReq = null;
-function prefetchSettings(){ if (!saved && !settingsReq) loadSettings(); }
+let settingsReq = null, settingsStale = false;
+const SET_CACHE = 'lb_admin_settings';
+function prefetchSettings(){ if ((!saved || settingsStale) && !settingsReq) loadSettings(); }
+/* 設定也先用這支手機上次存的版本顯示（可看不可存），拿到最新的再換上 */
+function showCachedSettings(){
+  try{
+    const c = JSON.parse(localStorage.getItem(SET_CACHE) || 'null'), sub = mySub();
+    if (!c || !sub || c.sub !== sub || Date.now() - c.at > 7 * 86400000) return;
+    saved = norm(c.settings); cur = clone(saved); settingsStale = true;
+    $('setErr').innerHTML = $('staffErr').innerHTML = '';
+    $('setBody').hidden = $('staffBody').hidden = false;
+    renderAll();
+  }catch(_){}
+}
+function applySettings(st){
+  const fresh = norm(st);
+  if (!saved || !isDirty()) cur = clone(fresh);   // 正在改的內容保留，只更新「已儲存」的基準
+  saved = fresh; settingsStale = false;
+  try{ const sub = mySub(); if (sub) localStorage.setItem(SET_CACHE, JSON.stringify({ sub, at: Date.now(), settings: st })); }catch(_){}
+  $('setErr').innerHTML = $('staffErr').innerHTML = '';
+  $('setBody').hidden = $('staffBody').hidden = false;
+  $('savebar').hidden = !$('pane-list').hidden || !$('pane-usage').hidden;
+  renderAll();
+}
 async function loadSettings(){
   if (settingsReq) return settingsReq;
   settingsReq = call('getSettings', {});
   const j = await settingsReq;
   settingsReq = null;
   if (!j.ok){
+    if (settingsStale){ toast('設定更新失敗，目前顯示的是上次的設定（不能儲存）：' + j.msg); return; }
     $('setErr').innerHTML = $('staffErr').innerHTML = `<div class="err">${esc(j.msg)}</div>`;
     $('setBody').hidden = $('staffBody').hidden = true; $('savebar').hidden = true; return;
   }
-  $('setErr').innerHTML = $('staffErr').innerHTML = '';
-  saved = norm(j.settings); cur = clone(saved);
-  $('setBody').hidden = $('staffBody').hidden = false;
-  $('savebar').hidden = !$('pane-list').hidden;
-  renderAll();
+  if (j.admPub !== undefined) rememberAdmPub(j.admPub);
+  applySettings(j.settings);
 }
 // 後端回傳 [["10:00","12:00"],...]；統一排序，方便比較是否有修改
 function norm(s){
@@ -620,6 +698,7 @@ function norm(s){
   o.reminderEnabled = !!o.reminderEnabled;
   o.reminderHour = Number.isInteger(o.reminderHour) ? o.reminderHour : 20;
   remReady = !!o.reminderReady; delete o.reminderReady;
+  savedVer = o.cfgVer || ''; delete o.cfgVer;   // 存檔時送回，後端用來擋「用舊資料蓋掉新設定」
   o.anyStaff = o.anyStaff !== false;
   o.slotStepMinutes = Number.isInteger(o.slotStepMinutes) ? o.slotStepMinutes : 0;
   o.durations = (Array.isArray(o.durations) && o.durations.length ? o.durations : [o.slotMinutes]).slice().sort((a, b) => a - b);
@@ -713,9 +792,9 @@ function hzPreview(){
 }
 function updateSaveBar(){
   const d = isDirty();
-  $('saveSt').textContent = d ? '有未儲存的修改' : '已是最新設定';
+  $('saveSt').textContent = settingsStale ? '讀取最新設定中…（讀到前不能儲存）' : d ? '有未儲存的修改' : '已是最新設定';
   $('saveSt').classList.toggle('dirty', d);
-  $('save').disabled = !d; $('revert').disabled = !d;
+  $('save').disabled = !d || settingsStale; $('revert').disabled = !d;
 }
 
 // 時段輸入（營業設定、師傅排班共用）
@@ -948,11 +1027,18 @@ function validate(s){
 
 $('save').addEventListener('click', async () => {
   const m = validate(cur); if (m) return toast(m);
-  const j = await call('saveSettings', { settings: cur });
-  if (!j.ok) return toast(j.msg);
-  saved = norm(j.settings); cur = clone(saved);
-  renderAll(); toast('已儲存，客人重新開啟預約頁就會套用');
-  if (data) loadList();   // 師傅名字／顏色可能改了
+  const j = await call('saveSettings', { settings: cur, baseVer: savedVer });
+  if (!j.ok){
+    toast(j.msg);
+    if (j.code === 'CONFLICT'){ saved = null; settingsStale = true; await loadSettings(); }   // 拿最新設定（正在改的內容會被換掉）
+    return;
+  }
+  saved = null; applySettings(j.settings);
+  toast('已儲存，客人約 1 分鐘內就會看到新設定');
+  if (data){   // 師傅名字／顏色可能改了：直接用剛存的設定更新清單，不用再跑一趟 Google
+    data.staff = saved.staff.map(x => ({ id:x.id, name:x.name, color:x.color, on:x.on }));
+    renderList();
+  }
 });
 $('remTest').addEventListener('click', async () => {
   const j = await call('testPush', {});
