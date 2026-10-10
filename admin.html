@@ -634,7 +634,9 @@ function renderUsage(){
     <div class="uitem l${i.level}">
       <div class="hd"><span>${LV[i.level]} ${esc(i.name)}</span><span class="pc">${i.pct}%</span></div>
       <div class="meter"><i style="width:${Math.min(100, i.pct)}%"></i></div>
-      <div class="sm">${esc(i.peakLabel)} <b>${fmtN(i.peak)}</b> / ${fmtN(i.limit)} ${esc(i.unit)}${i.peak !== i.now ? `　（今天 ${fmtN(i.now)}）` : ''}</div>
+      <div class="sm">${i.peakLabel === '近 7 天最高'
+        ? `今天到目前 <b>${fmtN(i.now)}</b>　｜　近 7 天最高 ${fmtN(i.peak)} / ${fmtN(i.limit)} ${esc(i.unit)}（百分比和長條用這個；每天 0 點重算）`
+        : `${esc(i.peakLabel)} <b>${fmtN(i.peak)}</b> / ${fmtN(i.limit)} ${esc(i.unit)}${i.peak !== i.now ? `　（今天 ${fmtN(i.now)}）` : ''}`}</div>
       <div class="sm">${esc(i.note)}</div>
     </div>`).join('');
   const hist = u.history.slice().reverse().map(h => `<tr><td>${mdOf(h.d)}</td><td>${fmtN(h.open)}</td><td>${fmtN(h.fetch)}</td><td>${h.trigMin}</td></tr>`).join('');
