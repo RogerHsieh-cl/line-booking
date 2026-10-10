@@ -369,18 +369,22 @@ try{ fetch(GAS_URL, { cache:'no-store' }).catch(() => {}); }catch(_){}
 main();
 async function main(){
   try{
-    await ensureLiffSdk();
-    await liff.init({ liffId: LIFF_ID });
+    await ensureLiffSdk(); mark('sdk');
+    await liff.init({ liffId: LIFF_ID }); mark('liff');
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
     if (tokenExpired()) return relogin();
     idToken = liff.getIDToken();
     try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
     showCachedList(); showCachedSettings();
-    const fbOk = await loadFromFirebase();          // 秘密連結：約 1 秒，不用等 Apps Script
+    const fbOk = await loadFromFirebase(); mark('fb');   // 秘密連結：約 1 秒，不用等 Apps Script
     const tab = ['#settings', '#staff', '#usage'].includes(location.hash) ? location.hash.slice(1) : '';
     if (tab) switchTab(tab);
-    if (!fbOk) await loadList();                    // 第一次用這支手機、或金鑰換過：走 Apps Script（會順便拿到新連結）
+    if (!fbOk){ await loadList(); mark('gas'); }        // 第一次用這支手機、或金鑰換過：走 Apps Script（會順便拿到新連結）
     else if (Date.now() - fbAt > 3 * 60000) loadList();   // 快照超過 3 分鐘：背景補拿最新，畫面先用快照
+    // 開後台超過 3 秒才看到清單 → 記一筆，分段看卡在哪（LINE 登入元件／LINE 登入／Firebase／Apps Script）
+    const shown = fbOk ? MARK.fb : MARK.gas;
+    if (shown > 3000) queueLog({ what:'開頁', result:'慢', ms:shown,
+      detail:`path=${fbOk ? 'firebase' : 'gas'} sdk=${MARK.sdk} liff=${MARK.liff - MARK.sdk} fb=${MARK.fb - MARK.liff}${fbOk ? ` age=${Math.round((Date.now() - fbAt) / 1000)}s` : ` gas=${MARK.gas - MARK.fb}`} ${liff.isInClient() ? 'LINE內' : '外部瀏覽器'}` });
     else flushLogs();
   }catch(e){ $('list').innerHTML = `<div class="err">初始化失敗：${esc(e.message || e)}</div>`; }
 }
