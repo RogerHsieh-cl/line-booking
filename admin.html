@@ -360,6 +360,8 @@ function relogin(){
   try{ n = Number(sessionStorage.getItem('lb_relogin') || 0); sessionStorage.setItem('lb_relogin', n + 1); }catch(_){}
   if (n >= 2){ try{ sessionStorage.removeItem('lb_relogin'); }catch(_){} throw new Error('LINE 登入狀態一直失效：請關閉頁面重新開啟'); }
   queueLog({ what:'重新登入', result:`LINE 憑證過期，第 ${n + 1} 次`, ms:0, detail:'' });
+  try{ if (isDirty()) sessionStorage.setItem('lb_dirty_settings', JSON.stringify(cur)); }catch(_){}   // 登入回來後還原沒存的修改
+  leavingForLogin = true;
   liff.logout();
   if (liff.isInClient()) location.reload(); else liff.login({ redirectUri: location.href });
 }
@@ -372,19 +374,21 @@ async function main(){
     await ensureLiffSdk(); mark('sdk');
     await liff.init({ liffId: LIFF_ID }); mark('liff');
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
-    if (tokenExpired()) return relogin();
-    idToken = liff.getIDToken();
-    try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
+    // LINE 登入憑證約 1 小時過期。看資料（Firebase 快照）不需要它，所以先秀資料；
+    // 要做事（取消、存設定、重新整理）時才重新登入，不讓每次開後台都先跳一次 LINE 登入頁
+    const expired = tokenExpired();
+    if (!expired){ idToken = liff.getIDToken(); try{ sessionStorage.removeItem('lb_relogin'); }catch(_){} }
     showCachedList(); showCachedSettings();
     const fbOk = await loadFromFirebase(); mark('fb');   // 秘密連結：約 1 秒，不用等 Apps Script
+    if (expired && !fbOk) return relogin();             // 沒有快照可看，才需要先登入
     const tab = ['#settings', '#staff', '#usage'].includes(location.hash) ? location.hash.slice(1) : '';
     if (tab) switchTab(tab);
     if (!fbOk){ await loadList(); mark('gas'); }        // 第一次用這支手機、或金鑰換過：走 Apps Script（會順便拿到新連結）
-    else if (Date.now() - fbAt > 3 * 60000) loadList();   // 快照超過 3 分鐘：背景補拿最新，畫面先用快照
+    else if (!expired && Date.now() - fbAt > 3 * 60000) loadList();   // 快照超過 3 分鐘：背景補拿最新，畫面先用快照
     // 開後台超過 3 秒才看到清單 → 記一筆，分段看卡在哪（LINE 登入元件／LINE 登入／Firebase／Apps Script）
     const shown = fbOk ? MARK.fb : MARK.gas;
     if (shown > 3000) queueLog({ what:'開頁', result:'慢', ms:shown,
-      detail:`path=${fbOk ? 'firebase' : 'gas'} sdk=${MARK.sdk} liff=${MARK.liff - MARK.sdk} fb=${MARK.fb - MARK.liff}${fbOk ? ` age=${Math.round((Date.now() - fbAt) / 1000)}s` : ` gas=${MARK.gas - MARK.fb}`} ${liff.isInClient() ? 'LINE內' : '外部瀏覽器'}` });
+      detail:`path=${fbOk ? 'firebase' : 'gas'}${expired ? ' token過期(延後登入)' : ''} sdk=${MARK.sdk} liff=${MARK.liff - MARK.sdk} fb=${MARK.fb - MARK.liff}${fbOk ? ` age=${Math.round((Date.now() - fbAt) / 1000)}s` : ` gas=${MARK.gas - MARK.fb}`} ${liff.isInClient() ? 'LINE內' : '外部瀏覽器'}` });
     else flushLogs();
   }catch(e){ $('list').innerHTML = `<div class="err">初始化失敗：${esc(e.message || e)}</div>`; }
 }
@@ -607,6 +611,7 @@ $('reload').addEventListener('click', loadList);
 $('list').addEventListener('click', async e => {
   const btn = e.target.closest('[data-id]'); if (!btn) return;
   const b = data.bookings.find(x => x.id === btn.dataset.id); if (!b) return;
+  if (tokenExpired()){ toast('LINE 登入逾時，先重新登入，回來後請再按一次取消'); setTimeout(relogin, 1200); return; }
   if (!(await ask('取消這筆預約？', `<b>${esc(b.name)}</b>　${md(b.start)} ${hm(b.start)}–${hm(b.end)}<br>客人的「我的預約」會同步消失，請記得另外通知客人。`, '確定取消'))) return;
   // 先從畫面拿掉（不用等 Google），背景送出；失敗再放回來
   const idx = data.bookings.indexOf(b);
@@ -676,6 +681,10 @@ function showCachedSettings(){
 function applySettings(st){
   const fresh = norm(st);
   if (!saved || !isDirty()) cur = clone(fresh);   // 正在改的內容保留，只更新「已儲存」的基準
+  try{
+    const pend = sessionStorage.getItem('lb_dirty_settings');
+    if (pend){ sessionStorage.removeItem('lb_dirty_settings'); cur = JSON.parse(pend); setTimeout(() => toast('已還原重新登入前沒存的修改，請再按一次「儲存」'), 300); }
+  }catch(_){}
   saved = fresh; settingsStale = false;
   try{ const sub = mySub(); if (sub) localStorage.setItem(SET_CACHE, JSON.stringify({ sub, at: Date.now(), settings: st })); }catch(_){}
   $('setErr').innerHTML = $('staffErr').innerHTML = '';
@@ -1051,7 +1060,8 @@ $('remTest').addEventListener('click', async () => {
   toast(j.ok ? '已送出，請到 LINE 查看官方帳號的訊息' : j.msg);
 });
 $('revert').addEventListener('click', () => { cur = clone(saved); renderAll(); toast('已還原'); });
-window.addEventListener('beforeunload', e => { if (isDirty()){ e.preventDefault(); e.returnValue = ''; } });
+let leavingForLogin = false;   // 重新登入時修改已暫存，不用跳「確定離開？」
+window.addEventListener('beforeunload', e => { if (isDirty() && !leavingForLogin){ e.preventDefault(); e.returnValue = ''; } });
 
 /* ---------------- 共用 UI ---------------- */
 function ask(title, body, okText){
