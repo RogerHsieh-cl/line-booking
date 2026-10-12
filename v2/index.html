@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com">
+<link rel="dns-prefetch" href="https://script.googleusercontent.com">
+<title>線上預約</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{--g:#06C755;--g2:#e7f8ee;--bd:#e5e7eb;--tx:#111827;--sub:#6b7280;--bg:#f6f7f9;--red:#dc2626}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font:15px/1.5 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;color:var(--tx);background:var(--bg);padding-bottom:40px}
+  header{background:#fff;padding:16px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center}
+  h1{font-size:18px;margin:0}
+  #who{color:var(--sub);font-size:13px}
+  section{background:#fff;margin:12px;border-radius:12px;padding:14px;border:1px solid var(--bd)}
+  h2{font-size:15px;margin:0 0 10px}
+  .empty{color:var(--sub);font-size:14px}
+  .bk{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--bd)}
+  .bk:first-of-type{border-top:0}
+  .bk .t{font-weight:600}
+  .bk .hint{font-size:12px;color:var(--sub)}
+  .bk .hint.lock{color:#b45309}
+  button.muted{opacity:.45}
+  .btns{display:flex;gap:6px;flex:none;margin-left:8px}
+  .btns button{white-space:nowrap}
+  button{font:inherit;border:1px solid var(--bd);background:#fff;border-radius:8px;padding:6px 12px;cursor:pointer}
+  button:disabled{opacity:.4;cursor:default}
+  .danger{color:var(--red);border-color:#fecaca}
+  .primary{background:var(--g);border-color:var(--g);color:#fff;font-weight:600}
+  .dates{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;scrollbar-width:none}
+  .dates::-webkit-scrollbar{display:none}
+  .date{flex:0 0 auto;text-align:center;min-width:64px;padding:6px 8px;line-height:1.3}
+  .date small{display:block;font-size:11px;color:var(--sub)}
+  .date.on{background:var(--g);border-color:var(--g);color:#fff}
+  .date.on small{color:#fff}
+  .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;margin-top:10px}
+  .slot{padding:10px 0;font-weight:600}
+  .slot.full{background:#f3f4f6;color:#9ca3af;font-weight:400}
+  .slot.mine{background:var(--g2);border-color:var(--g);color:#047857}
+  .staffs{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
+  .staffs::-webkit-scrollbar{display:none}
+  .stf{flex:0 0 92px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:12px;line-height:1.25}
+  .stf .nm{font-weight:600;font-size:14px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stf.on{border-color:var(--g);box-shadow:0 0 0 2px var(--g) inset;background:var(--g2)}
+  .stf.on .nm{color:#047857}
+  .av{position:relative;width:56px;height:56px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:20px;flex:none}
+  .av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .av.any{background:#e5e7eb;color:var(--sub)}
+  #staffInfo{margin-top:10px}
+  .intro{display:flex;gap:12px;align-items:flex-start;background:var(--bg);border-radius:12px;padding:12px}
+  .intro .av{width:84px;height:84px;border-radius:12px;font-size:30px}
+  .intro .tx{min-width:0}
+  .intro h3{margin:0;font-size:16px}
+  .intro .ti{font-size:13px;color:var(--sub);margin-top:2px}
+  .intro .bio{font-size:14px;margin-top:6px;white-space:pre-line;overflow-wrap:anywhere}
+  .durs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .dur{padding:8px 14px;border-radius:99px;font-weight:600}
+  .dur.on{background:var(--g);border-color:var(--g);color:#fff}
+  .hintline{font-size:12px;color:var(--sub)}
+  #banner{margin:12px;padding:10px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px}
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;z-index:10}
+  .sheet{background:#fff;width:100%;border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
+  .sheet h3{margin:0 0 6px;font-size:17px}
+  .sheet p{margin:0 0 12px;color:var(--sub)}
+  .sheet textarea{width:100%;border:1px solid var(--bd);border-radius:8px;padding:8px;font:inherit;resize:none;margin-bottom:12px}
+  .sheet .row{display:flex;gap:8px}
+  .sheet .row button{flex:1;padding:12px}
+  #toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:rgba(17,24,39,.92);color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
+  #toast.show{opacity:1}
+  #busy{position:fixed;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:30;font-size:14px;color:var(--sub)}
+  .sync{font-size:12px;font-weight:400;color:var(--sub);margin-left:6px;animation:blink 1.2s ease-in-out infinite}
+  @keyframes blink{50%{opacity:.35}}
+  #loadbar{position:fixed;left:0;right:0;top:0;height:3px;z-index:40;overflow:hidden;pointer-events:none}
+  #loadbar::before{content:"";position:absolute;inset:0;width:40%;background:var(--g);animation:lb 1s ease-in-out infinite}
+  @keyframes lb{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+  body.stale #mine, body.stale #slots, body.stale #staffs, body.stale #durs, body.stale #dates{pointer-events:none;opacity:.6}
+  #slowhint{margin:12px;padding:10px 14px;border-radius:10px;background:#f3f4f6;font-size:13px;color:var(--sub);display:flex;justify-content:space-between;align-items:center;gap:8px}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><h1>線上預約</h1><div id="who"></div></header>
+
+<section>
+  <h2>我的預約 <small id="mineSync" class="sync" hidden>同步中…</small></h2>
+  <div id="mine"><div class="empty">載入中…</div></div>
+</section>
+
+<div id="slowhint" hidden><span id="slowtxt">正在讀取最新時段，網路較慢時約需 10 秒…（灰色是上次的畫面）</span><button onclick="location.reload()">重新整理</button></div>
+<div id="errbox" hidden style="margin:12px;padding:10px 14px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:var(--red);font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span id="errmsg"></span><button onclick="location.reload()">重新整理</button></div>
+<div id="banner" hidden></div>
+
+<section id="staffSec" hidden>
+  <h2>選擇師傅</h2>
+  <div id="staffs" class="staffs"></div>
+  <div id="staffInfo"></div>
+</section>
+
+<section>
+  <h2 id="pickTitle">選擇時段</h2>
+  <div id="durs" class="durs" hidden></div>
+  <div id="dates" class="dates"></div>
+  <div id="slots" class="slots"></div>
+</section>
+
+<div id="mask" class="mask" hidden>
+  <div class="sheet">
+    <h3 id="shTitle"></h3>
+    <p id="shBody"></p>
+    <textarea id="shNote" rows="2" maxlength="200" placeholder="備註（選填，例如：聯絡電話、需求）"></textarea>
+    <div class="row">
+      <button id="shCancel">返回</button>
+      <button id="shOk" class="primary">確認</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<div id="busy" hidden>處理中…</div>
+<div id="loadbar" hidden></div>
+
+<script>
+/* ======== 部署時修改這三個值 ======== */
+// 新舊 LIFF 並存：網址在 /v2/ 底下的頁面用龍極堂 Provider 的新 LIFF，其餘維持舊的（舊客人的預約綁舊 UID）
+const IS_V2 = /\/v2\//.test(location.pathname);
+const LIFF_ID = IS_V2 ? '2011981426-jiIQRqi1' : '2011839889-nTlHfdBE';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzOUACsp-0V7mQE8g1idgYgFWbnjc0Kpo0UIhK8tfVG8Fig2t9U8zk1uSsOfu9mk5mY/exec';
+// Firebase 公開時段網址：空白＝自動從後端取得（第一次開啟後記在手機裡）
+const PUB_URL = 'https://line-booking-8f073-default-rtdb.asia-southeast1.firebasedatabase.app/pub/view.json';
+const SEND_CHAT_CONFIRM = true; // 完成後以使用者身分在聊天室送出確認訊息（需 chat_message.write scope，免費、不佔官方帳號訊息額度）
+/* =================================== */
+
+const TZ = 'Asia/Taipei';
+const WD = {Sun:'日',Mon:'一',Tue:'二',Wed:'三',Thu:'四',Fri:'五',Sat:'六'};
+const $ = id => document.getElementById(id);
+let idToken = '', state = null, selDate = null, moving = null;
+let selStaff = null;   // 師傅代號；'' = 不指定
+let selDur = null;     // 服務長度（分鐘）
+// Google 日曆事件顏色（與管理頁、日曆上的顏色一致）
+const COLORS = {1:'#7986cb',2:'#33b679',3:'#8e24aa',4:'#e67c73',5:'#f6bf26',6:'#f4511e',7:'#039be5',8:'#616161',9:'#3f51b5',10:'#0b8043',11:'#d50000'};
+
+/* ---------- 時間格式（固定台北時區，不受手機時區影響） ---------- */
+const dtf = new Intl.DateTimeFormat('en-US', {timeZone:TZ, hourCycle:'h23', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', weekday:'short'});
+function parts(ms){ const o = {}; dtf.formatToParts(new Date(ms)).forEach(p => o[p.type] = p.value); return o; }
+const hm = ms => { const p = parts(ms); return `${p.hour}:${p.minute}`; };
+const md = ms => { const p = parts(ms); return `${p.month}/${p.day}（${WD[p.weekday]}）`; };
+const dtfY = new Intl.DateTimeFormat('en-CA', {timeZone:TZ, year:'numeric', month:'2-digit', day:'2-digit'});
+const ymd = ms => dtfY.format(new Date(ms));   // yyyy-MM-dd（台北）
+const range = (s, e) => `${md(s)} ${hm(s)}–${hm(e)}`;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ---------- 啟動 ---------- */
+const PAGE_NAME = 'index';
+/* ---------- 診斷回報：慢、失敗、重新登入 → 後端「系統紀錄」分頁 ---------- */
+const T0 = performance.now(), MARK = {};
+const mark = k => { MARK[k] = Math.round(performance.now() - T0); };
+const LOG_KEY = 'lb_pending_logs', SLOW_CLIENT_MS = 5000;
+function deviceInfo(){
+  let s = '';
+  try{ s = [liff.getOS(), liff.isInClient() ? 'LINE ' + (liff.getLineVersion() || '') : '外部瀏覽器'].join(' '); }catch(_){ s = '（LINE 元件未載入）'; }
+  const net = (navigator.connection || {}).effectiveType;
+  return `${s}${net ? ' ' + net : ''} | ${navigator.userAgent.slice(0, 90)}`;
+}
+const perfStr = p => p ? Object.keys(p).map(k => `${k}=${p[k]}`).join(' ') : '';
+function queueLog(l){
+  l.page = PAGE_NAME; l.device = deviceInfo(); l.id = Math.random().toString(36).slice(2, 12);   // 後端用來去除重送
+  l.detail = `at=${new Date().toTimeString().slice(0, 8)} ${l.detail || ''}`;
+  try{ const q = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); q.push(l); localStorage.setItem(LOG_KEY, JSON.stringify(q.slice(-10))); }catch(_){}
+  flushLogs();
+}
+// 送不出去就留在手機裡，下次再送
+function flushLogs(){
+  let q = [];
+  try{ q = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); }catch(_){}
+  if (!q.length) return;
+  fetch(GAS_URL, { method:'POST', body: JSON.stringify({ action:'clientLog', idToken, logs:q }), keepalive:true })
+    .then(r => r.text()).then(t => { if (JSON.parse(t).ok) try{ localStorage.removeItem(LOG_KEY); }catch(_){} })
+    .catch(() => {});
+}
+
+/* LINE SDK 偶爾載入失敗（網路或擋廣告外掛），自動重試一次 */
+const SDK_MSG = 'LINE 登入元件載入失敗。請重新整理；仍失敗請關閉擋廣告外掛、改用無痕視窗，或直接用手機 LINE 開啟。';
+function ensureLiffSdk(){
+  if (typeof liff !== 'undefined') return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://static.line-scdn.net/liff/edge/2/sdk.js?retry=' + Date.now();
+    s.onload = () => (typeof liff === 'undefined' ? reject(new Error(SDK_MSG)) : resolve());
+    s.onerror = () => reject(new Error(SDK_MSG));
+    document.head.appendChild(s);
+    setTimeout(() => reject(new Error(SDK_MSG)), 10000);
+  });
+}
+
+/* ---------- 上次的畫面先顯示（只存在這支手機），背景讀最新資料 ---------- */
+const CACHE_KEY = IS_V2 ? 'lb_view_v1_v2' : 'lb_view_v1';
+function loadCachedView(){
+  try{
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if (c && Date.now() - c.t < 12 * 3600000 && c.raw){ state = decodeView(JSON.parse(c.raw)); return !!state.slots; }
+  }catch(_){ /* 無痕或停用儲存時略過 */ }
+  return false;
+}
+function saveCachedView(raw){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), raw })); }catch(_){} }
+
+/* 後端精簡格式（fmt=2）：「分鐘.旗標.當班.有空」→ 一般時段物件 */
+function decodeView(j){
+  if (!j.slotsC) return j;
+  const ids = (j.staff || []).map(s => s.id), days = {};
+  const bits = n => ids.filter((_, i) => Math.floor(n / Math.pow(2, i)) % 2);
+  j.slotsBy = {};
+  Object.keys(j.slotsC).forEach(d => {
+    const dm = Number(d) * 60000;
+    j.slotsBy[d] = j.slotsC[d] ? j.slotsC[d].split(',').map(x => {
+      const p = x.split('.').map(Number), start = j.base + p[0] * 60000, di = Math.floor(p[0] / 1440);
+      const o = { start, end: start + dm, date: days[di] || (days[di] = ymd(j.base + di * 86400000 + 43200000)), ok: !!(p[1] & 1), mine: !!(p[1] & 2) };
+      if (p.length > 2){ o.w = bits(p[2]); o.f = bits(p[3]); }
+      return o;
+    }) : [];
+  });
+  j.slots = j.slotsBy[j.config.slotMinutes] || [];
+  return j;
+}
+
+/* ---------- LINE 登入憑證過期：登出再登入拿新的（避免一直重新整理進不去） ---------- */
+function tokenExpired(){
+  try{ const d = liff.getDecodedIDToken(); return !d || !d.exp || d.exp * 1000 < Date.now() + 60000; }
+  catch(_){ return true; }
+}
+function relogin(){
+  let n = 0;
+  try{ n = Number(sessionStorage.getItem('lb_relogin') || 0); sessionStorage.setItem('lb_relogin', n + 1); }catch(_){}
+  if (n >= 2){
+    try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
+    throw new Error('LINE 登入狀態一直失效：請關閉這個頁面再從 LINE 重新開啟；仍不行請更新 LINE App');
+  }
+  queueLog({ what:'重新登入', result:`LINE 憑證過期，第 ${n + 1} 次`, ms:0, detail:'' });
+  liff.logout();
+  if (liff.isInClient()) location.reload();          // LINE 內開啟：重新整理時自動登入
+  else liff.login({ redirectUri: location.href });
+}
+
+/* ---------- Firebase 公開時段：不用等 Apps Script，1 秒內就有時段可以點 ---------- */
+let gasApplied = false, pubApplied = false, initInFlight = false, liffOk;
+const liffReady = new Promise(r => { liffOk = r; });
+function pubUrl(){ if (PUB_URL) return PUB_URL; try{ return localStorage.getItem('lb_pub_url') || ''; }catch(_){ return ''; } }
+async function loadPublic(){
+  const url = pubUrl(); if (!url) return;
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 8000), t = performance.now();
+  try{
+    const snap = await (await fetch(url, { cache:'no-store', signal: ctl.signal })).json();
+    MARK.pub = Math.round(performance.now() - T0);
+    if (!snap || snap.v !== 1 || !snap.slotsC || gasApplied) return;
+    state = mergePublic(snap);
+    pubApplied = true;
+    if (initInFlight){ $('loadbar').hidden = true; $('mineSync').hidden = false; }   // 時段已是最新，只剩「我的預約」在背景同步
+    document.body.classList.remove('stale'); $('slowhint').hidden = true;
+    render();
+  }catch(e){
+    queueLog({ what:'讀取公開時段', result: e.name === 'AbortError' ? '逾時' : '失敗', ms:Math.round(performance.now() - t), detail:String(e.message || e) });
+  }finally{ clearTimeout(to); }
+}
+// 公開時段沒有「我的」資訊：用上次的我的預約補上（已約的時段標成我的、重疊的不能再約），並濾掉已來不及預約的時段
+function mergePublic(snap){
+  const j = decodeView(snap);
+  j.user = (state && state.user) || { name:'' };
+  j.mineUnknown = !(state && state.mine);         // 第一次開、沒有上次資料：我的預約等後端回來
+  j.mine = (state && state.mine) || [];
+  const earliest = Date.now() + (j.config.minLeadMinutes || 0) * 60000;
+  Object.keys(j.slotsBy).forEach(d => {
+    j.slotsBy[d] = j.slotsBy[d].filter(s => s.start >= earliest).map(s => {
+      const hit = j.mine.filter(b => b.start < s.end && b.end > s.start);
+      if (hit.length){ s.ok = false; s.mine = hit.some(b => b.start === s.start); }
+      return s;
+    });
+  });
+  j.slots = j.slotsBy[j.config.slotMinutes] || [];
+  return j;
+}
+
+/* 開頁就先「敲門」：不帶資料的 GET 只回版本資訊，讓手機先建好到 Google 的連線、喚醒後端，真正的請求就少等一段 */
+try{ fetch(GAS_URL, { cache:'no-store' }).catch(() => {}); }catch(_){}
+main();
+async function main(){
+  if (loadCachedView()){ document.body.classList.add('stale'); render(); }
+  const slowTimer = setTimeout(() => { if (!pubApplied) $('slowhint').hidden = false; }, 8000);
+  loadPublic();                                   // 跟 LINE 登入同時進行
+  try{
+    await ensureLiffSdk(); mark('sdk');
+    await liff.init({ liffId: LIFF_ID }); mark('liff'); liffOk();
+    if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    if (tokenExpired()) return relogin();
+    idToken = liff.getIDToken();
+    if (!idToken) throw new Error('無法取得 ID token，請確認 LIFF scope 已勾選 openid');
+    let j = await call('init');
+    if (!j && lastFailRetryable && pubApplied) fail('讀不到我的預約');   // 已自動送了 3 次；時段已顯示，直接給「再試一次」按鈕
+    else if (!j && lastFailRetryable){         // 連時段都沒有：整輪再試一次
+      $('slowtxt').textContent = '第一次連線沒成功，自動重新連線中…'; $('slowhint').hidden = false;
+      await new Promise(r => setTimeout(r, 800));
+      j = await call('init', {}, true);
+    }
+    mark('ready');
+    if (j){
+      try{ sessionStorage.removeItem('lb_relogin'); }catch(_){}
+      try{ if (j.pubUrl) localStorage.setItem('lb_pub_url', j.pubUrl); else localStorage.removeItem('lb_pub_url'); }catch(_){}
+      const shown = MARK.pub && pubApplied ? MARK.pub : MARK.ready;   // 客人實際看到時段的時間
+      if (shown > SLOW_CLIENT_MS || MARK.ready > 3 * SLOW_CLIENT_MS) queueLog({ what:'開頁', result: shown > SLOW_CLIENT_MS ? '慢' : '我的預約慢', ms:shown, detail:`pub=${MARK.pub ?? '-'} sdk=${MARK.sdk} liff=${MARK.liff - MARK.sdk} api=${MARK.ready - MARK.liff} ${perfStr(j._perf)}` });
+      else flushLogs();
+    }
+  }catch(e){
+    fail('初始化失敗：' + (e.message || e));
+    queueLog({ what:'開頁', result:'失敗', ms:Math.round(performance.now() - T0), detail:`${e.message || e} sdk=${MARK.sdk ?? '-'} liff=${MARK.liff ?? '-'}` });
+  }finally{
+    liffOk();                                     // LINE 登入失敗也要放行，按鈕才會顯示錯誤而不是卡住
+    clearTimeout(slowTimer); $('slowhint').hidden = true;
+  }
+}
+
+/* ---------- API ---------- */
+/* ---------- 呼叫 Apps Script：讀取類「避險請求」----------
+ * Google 入口偶爾卡 10～30 秒（後端其實 1 秒就算完），或把請求變成「開網址」只回版本資訊。
+ * 做法：送出後 HEDGE_MS 還沒回來就再送一次，誰先回來用誰（最多 tries 次）；
+ *       收到版本資訊（被轉成 GET）時，下一次改用 GET ?q= 帶資料，讓 doGet 也能處理。 */
+const HEDGE_MS = 6000;
+const isStub = j => !!(j && j.ok && j.service && !j.user && !j.settings && !j.bookings && !j.usage);
+function gasFetch(body, { tries = 1, hedgeMs = HEDGE_MS, timeoutMs = 20000 } = {}){
+  return new Promise((resolve, reject) => {
+    let started = 0, running = 0, settled = false, lastBad = null, sawStub = false, hedgeTimer = null;
+    const ctls = [], notes = [];
+    const finish = (fn, v) => {
+      if (settled) return; settled = true; clearTimeout(hedgeTimer);
+      ctls.forEach(c => { try{ c.abort(); }catch(_){} });
+      fn(v);
+    };
+    const start = () => {
+      clearTimeout(hedgeTimer);
+      if (settled || started >= tries) return;
+      if (running > 0) notes.push(`#${started} ${hedgeMs / 1000} 秒沒回，加送`);
+      const n = ++started, ac = new AbortController(); running++; ctls.push(ac);
+      const to = setTimeout(() => ac.abort(), timeoutMs);
+      if (started < tries) hedgeTimer = setTimeout(start, hedgeMs);
+      const useGet = sawStub && body.length < 6000;
+      const req = useGet ? fetch(GAS_URL + '?q=' + encodeURIComponent(body), { signal: ac.signal })
+                         : fetch(GAS_URL, { method:'POST', body, signal: ac.signal });
+      req.then(res => res.text().then(txt => {
+          let j = null; try{ j = JSON.parse(txt); }catch(_){}
+          if (j && !isStub(j)) return finish(resolve, { res, txt, j, n, notes });
+          if (isStub(j)) sawStub = true;
+          notes.push(`#${n}${useGet ? 'GET' : ''} ${j ? '回應不完整' : 'HTTP ' + res.status}`);
+          lastBad = { res, txt, j, n, notes };
+        }))
+        .catch(e => {
+          if (settled) return;
+          notes.push(`#${n}${useGet ? 'GET' : ''} ${e.name === 'AbortError' ? '逾時' : (e.message || e)}`);
+          if (!lastBad || lastBad.txt === undefined) lastBad = e;   // 有收到內容的失敗比較好判斷，優先保留
+        })
+        .finally(() => {
+          clearTimeout(to); running--;
+          if (settled) return;
+          if (started < tries) start();                 // 失敗了就馬上補送，不用等避險計時
+          else if (running === 0) finish(reject, lastBad);
+        });
+    };
+    start();
+  });
+}
+let lastFailRetryable = false, reqSeq = 0, appliedSeq = 0;
+async function call(action, extra = {}, isRetry = false){
+  const seq = ++reqSeq;                     // 晚回來的舊回應（例如開頁讀取比預約晚到）不能蓋掉新結果
+  const quiet = action === 'init';          // 讀取用細進度條，不擋整個畫面
+  lastFailRetryable = false;
+  if (quiet){ initInFlight = true; if (pubApplied) $('mineSync').hidden = false; else $('loadbar').hidden = false; } else busy(true);
+  let reload = false;
+  try{
+    await liffReady;                        // 公開時段先出來時，客人可能比 LINE 登入更早點下去
+    if (tokenExpired()){ relogin(); return null; }
+    idToken = liff.getIDToken();
+    // 不帶 Content-Type → text/plain，屬 simple request，GAS 不需處理 CORS preflight
+    var tA = performance.now();
+    // 讀取（init）：6 秒沒回應就同時再送一次，誰先回來用誰；預約／改期／取消只送一次
+    let r;
+    // Google 入口有時 20 多秒才回，所以每次最多等 45 秒（背景讀取，不擋畫面）
+    try{ r = await gasFetch(JSON.stringify({ action, idToken, fmt:2, ...extra }), quiet ? { tries:3, timeoutMs:45000 } : { tries:1, timeoutMs:45000 }); }
+    catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw bad; }
+    if (r.n > 1) queueLog({ what:action, result:`第 ${r.n} 次才成功`, ms:Math.round(performance.now() - tA), detail:r.notes.join('；') });
+    const res = r.res, txt = r.txt;
+    let j = r.j;
+    if (!j) {
+      // 後端回傳 HTML（登入頁、授權頁、錯誤頁），把標題顯示出來方便判斷
+      const t = ((txt.match(/<title>([^<]*)<\/title>/i) || [])[1] || '').trim();
+      lastFailRetryable = quiet && !isRetry;
+      queueLog({ what:action + (isRetry ? '（重試）' : ''), result:`非 JSON HTTP ${res.status}`, ms:Math.round(performance.now() - tA), detail:t });
+      if (lastFailRetryable) return null;     // 先別顯示錯誤，main() 會自動重試
+      throw new Error(`後端回傳的不是資料（HTTP ${res.status}${t ? '：' + t : ''}）。請用無痕視窗打開 GAS_URL 檢查部署設定`);
+    }
+    if (!j.ok){
+      if (j.error === 'TOKEN_INVALID'){ relogin(); return null; }
+      if (['SERVER_ERROR','CONFIG','BUSY','BAD_ACTION'].includes(j.error)) queueLog({ what:action, result:j.error, ms:Math.round(performance.now() - tA), detail:`${j.message} ${perfStr(j._perf)}` });
+      fail(`${j.message || '發生錯誤'}（${j.error}）`);
+      reload = !!state && ['SLOT_TAKEN','INVALID_SLOT','NOT_FOUND'].includes(j.error);
+      return null;
+    }
+    if (!j.user || !j.config){
+      // 收到的不是預約資料（例如 Google 把請求轉成開網址，回了版本資訊 {"service":"line-booking"}）
+      queueLog({ what:action + (isRetry ? '（重試）' : ''), result:'回應不完整', ms:Math.round(performance.now() - tA), detail:`keys=${Object.keys(j).join(',')} ${(r.notes || []).join('；')}` });
+      if (quiet && !isRetry){ lastFailRetryable = true; return null; }
+      fail('後端回應不完整，請重新整理'); return null;
+    }
+    const apiMs = Math.round(performance.now() - tA);
+    if (action !== 'init' && apiMs > SLOW_CLIENT_MS) queueLog({ what:action, result:'慢', ms:apiMs, detail:perfStr(j._perf) });
+    if (quiet) gasApplied = true;
+    if (seq < appliedSeq) return j;
+    appliedSeq = seq;
+    state = decodeView(j);
+    document.body.classList.remove('stale'); $('errbox').hidden = true;
+    render();
+    saveCachedView(txt);
+    return j;
+  }catch(e){
+    const timeout = e.name === 'AbortError';
+    if (!/後端回傳的不是資料/.test(e.message || '')) queueLog({ what:action + (isRetry ? '（重試）' : ''), result:timeout ? '逾時' : '連線失敗', ms:typeof tA === 'number' ? Math.round(performance.now() - tA) : 0, detail:String(e.message || e) });
+    if (quiet && !isRetry){ lastFailRetryable = true; return null; }   // main() 會自動重試
+    fail(timeout ? '連線逾時（45 秒），請確認網路後重新整理' : '連線失敗：' + (e.message || e));
+    return null;
+  }finally{
+    if (quiet){ initInFlight = false; $('loadbar').hidden = true; $('mineSync').hidden = true; } else busy(false);
+    if (reload) setTimeout(() => call('init'), 0);
+  }
+}
+
+/* ---------- Render ---------- */
+function render(){
+  $('who').textContent = (state.user && state.user.name) || '';
+
+  // 我的預約
+  const mine = state.mine;
+  $('mine').innerHTML = mine.length ? mine.map(b => `
+    <div class="bk">
+      <div>
+        <div class="t">${range(b.start, b.end)}</div>
+        ${b.staffName ? `<div class="hint">師傅：${esc(b.staffName)}${b.auto ? '（店家安排）' : ''}</div>` : ''}
+        ${b.canChange ? '' : `<div class="hint lock">⚠️ 開始前 ${lockText()}內無法線上改期或取消，請直接聯繫店家</div>`}
+      </div>
+      <div class="btns">
+        <button data-act="move" data-id="${esc(b.id)}" class="${b.canChange ? '' : 'muted'}">改期</button>
+        <button data-act="cancel" data-id="${esc(b.id)}" class="danger ${b.canChange ? '' : 'muted'}">取消</button>
+      </div>
+    </div>`).join('') : `<div class="empty">${state.mineUnknown ? '讀取我的預約中…' : '目前沒有預約'}</div>`;
+
+  // 改期提示
+  if (moving && !mine.some(b => b.id === moving.id)) moving = null;
+  $('banner').hidden = !moving;
+  if (moving){
+    $('banner').innerHTML = `<span>改期中：原 ${range(moving.start, moving.end)}，請選擇新時段</span><button id="stopMove">取消改期</button>`;
+    $('stopMove').onclick = () => { moving = null; render(); };
+  }
+  $('pickTitle').textContent = moving ? '選擇新時段' : '選擇時段';
+
+  // 師傅
+  const cfg = state.config;
+  $('staffSec').hidden = !cfg.staffMode;
+  if (cfg.staffMode){
+    const ids = state.staff.map(s => s.id);
+    if (selStaff === null || (selStaff && !ids.includes(selStaff)) || (selStaff === '' && !cfg.anyStaff)) selStaff = cfg.anyStaff ? '' : (ids[0] || '');
+    const opts = (cfg.anyStaff ? [{ id:'', name:'不指定' }] : []).concat(state.staff);
+    $('staffs').innerHTML = opts.map(s => `<button class="stf ${s.id === selStaff ? 'on' : ''}" data-staff="${esc(s.id)}">${avatar(s)}<span class="nm">${esc(s.name)}</span></button>`).join('');
+    const cur = state.staff.find(s => s.id === selStaff);
+    $('staffInfo').innerHTML = !cur ? '<div class="hintline">顯示所有師傅的空檔，由店家安排有空的師傅</div>'
+      : (cur.title || cur.bio || cur.photo) ? `<div class="intro">${avatar(cur)}<div class="tx"><h3>${esc(cur.name)}</h3>${cur.title ? `<div class="ti">${esc(cur.title)}</div>` : ''}${cur.bio ? `<div class="bio">${esc(cur.bio)}</div>` : ''}</div></div>` : '';
+  } else selStaff = '';
+
+  // 服務長度
+  const durs = cfg.durations || [cfg.slotMinutes];
+  if (!durs.includes(selDur)) selDur = cfg.slotMinutes;
+  $('durs').hidden = durs.length < 2;
+  $('durs').innerHTML = durs.map(d => `<button class="dur ${d === selDur ? 'on' : ''}" data-dur="${d}">${durLabel(d)}</button>`).join('');
+
+  // 日期 tabs
+  const byDate = {};
+  viewSlots().forEach(s => (byDate[s.date] = byDate[s.date] || []).push(s));
+  const dates = Object.keys(byDate).sort();
+  if (!dates.length){
+    $('dates').innerHTML = ''; $('slots').innerHTML = '<div class="empty">目前沒有開放的時段</div>';
+    return;
+  }
+  if (!byDate[selDate]) selDate = dates.find(d => byDate[d].some(s => s.ok)) || dates[0];
+
+  $('dates').innerHTML = dates.map(d => {
+    const n = byDate[d].filter(s => s.ok).length;
+    return `<button class="date ${d === selDate ? 'on' : ''}" data-date="${d}">${md(byDate[d][0].start)}<small>${n ? '可約 ' + n : '已滿'}</small></button>`;
+  }).join('');
+
+  $('slots').innerHTML = byDate[selDate].map(s => {
+    if (s.mine) return `<button class="slot mine" disabled>${hm(s.start)}<br><small>我的</small></button>`;
+    if (!s.ok)  return `<button class="slot full" disabled>${hm(s.start)}<br><small>已滿</small></button>`;
+    return `<button class="slot" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}</button>`;
+  }).join('');
+}
+
+/* 頭像：有照片用照片，沒有（或載入失敗）顯示名字第一個字 */
+function avatar(s){
+  if (!s.id) return `<span class="av any"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.6"/><path d="M16 14.2c2.9.3 5 2.7 5 5.8"/></svg></span>`;
+  const bg = COLORS[s.color] || '#9ca3af';
+  return `<span class="av" style="background:${bg}">${esc(Array.from(s.name)[0] || '')}${s.photo ? `<img src="${esc(s.photo)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>`;
+}
+
+/* 選了特定師傅時，只看那位師傅的班表與空檔 */
+function durLabel(m){ return m % 30 === 0 && m >= 60 ? `${m / 60} 小時` : `${m} 分鐘`; }
+function viewSlots(){
+  let list = (state.slotsBy && state.slotsBy[selDur]) || state.slots;
+  if (state.config.staffMode && selStaff){
+    list = list.filter(s => s.mine || s.w.includes(selStaff))
+      .map(s => Object.assign({}, s, { ok: !s.mine && s.f.includes(selStaff) }));
+  }
+  if (!state.config.showFullSlots) list = list.filter(s => s.ok || s.mine);
+  return list;
+}
+function staffLabel(){
+  if (!state.config.staffMode) return '';
+  const s = state.staff.find(x => x.id === selStaff);
+  return s ? s.name : '不指定（由店家安排）';
+}
+
+/* ---------- 事件 ---------- */
+$('durs').addEventListener('click', e => {
+  const b = e.target.closest('[data-dur]'); if (!b) return;
+  selDur = Number(b.dataset.dur); render();
+});
+$('staffs').addEventListener('click', e => {
+  const b = e.target.closest('[data-staff]'); if (!b) return;
+  selStaff = b.dataset.staff; render();
+});
+
+$('dates').addEventListener('click', e => {
+  const b = e.target.closest('[data-date]'); if (!b) return;
+  selDate = b.dataset.date; render();
+});
+
+$('slots').addEventListener('click', async e => {
+  const b = e.target.closest('[data-start]'); if (!b) return;
+  const start = Number(b.dataset.start), end = Number(b.dataset.end);
+  if (moving){
+    const who = staffLabel();
+    const r = await sheet({ title:'確認改期', body:`${range(moving.start, moving.end)}<br>→ <b>${range(start, end)}</b>${who ? `<br>師傅：${esc(who)}` : ''}`, okText:'確認改期' });
+    if (!r) return;
+    const j = await call('reschedule', { eventId: moving.id, start, staff: selStaff, duration: selDur });
+    if (j){ moving = null; done(j.done); render(); }
+  }else{
+    const who = staffLabel();
+    const r = await sheet({ title:'確認預約', body:`<b>${range(start, end)}</b>${who ? `<br>師傅：${esc(who)}` : ''}`, note:true, okText:'確認預約' });
+    if (!r) return;
+    const j = await call('book', { start, note: r.note, staff: selStaff, duration: selDur });
+    if (j) done(j.done);
+  }
+});
+
+$('mine').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const bk = state.mine.find(x => x.id === b.dataset.id); if (!bk) return;
+  if (!bk.canChange){
+    await sheet({ title:'無法線上改期或取消', body:`<b>${range(bk.start, bk.end)}</b><br>開始前 ${lockText()}內無法線上異動，請直接聯繫店家。`, okText:'知道了', single:true });
+    return;
+  }
+  if (b.dataset.act === 'move'){
+    moving = bk;
+    const bkDur = Math.round((bk.end - bk.start) / 60000);
+    if ((state.config.durations || []).includes(bkDur)) selDur = bkDur;   // 改期預設維持原本時長
+    if (state.config.staffMode){
+      // 改期預設看原本的師傅；原本是店家安排的就維持「不指定」
+      if (bk.auto && state.config.anyStaff) selStaff = '';
+      else if (state.staff.some(s => s.id === bk.staff)) selStaff = bk.staff;
+    }
+    render();
+    window.scrollTo({ top: $('banner').offsetTop - 8, behavior:'smooth' });
+  }else{
+    const r = await sheet({ title:'取消預約', body:`確定取消 <b>${range(bk.start, bk.end)}</b>？`, okText:'確定取消', danger:true });
+    if (!r) return;
+    const j = await call('cancel', { eventId: bk.id });
+    if (j) done(j.done);
+  }
+});
+
+/* ---------- 完成通知 ---------- */
+async function done(d){
+  if (!d) return;
+  const label = { book:'✅ 預約成功', reschedule:'🔄 已改期', cancel:'❌ 已取消預約' }[d.action];
+  toast(d.staffName && d.action !== 'cancel' ? `${label}（師傅：${d.staffName}）` : label);
+  if (!SEND_CHAT_CONFIRM || !liff.isInClient()) return;
+  try{ await liff.sendMessages([{ type:'text', text:`${label}\n${range(d.start, d.end)}${d.staffName ? '\n師傅：' + d.staffName : ''}` }]); }catch(_){ /* 非聊天室開啟或未授權 scope 時忽略 */ }
+}
+
+/* ---------- UI helpers ---------- */
+function lockText(){
+  const m = state.config.minCancelMinutes;
+  return m % 60 === 0 ? `${m / 60} 小時` : `${m} 分鐘`;
+}
+function sheet({ title, body, note = false, okText = '確認', danger = false, single = false }){
+  return new Promise(resolve => {
+    $('shTitle').textContent = title;
+    $('shBody').innerHTML = body;
+    $('shNote').hidden = !note; $('shNote').value = '';
+    $('shOk').textContent = okText;
+    $('shOk').className = danger ? 'danger' : 'primary';
+    $('shCancel').hidden = single;
+    $('mask').hidden = false;
+    const close = v => { $('mask').hidden = true; $('shOk').onclick = $('shCancel').onclick = $('mask').onclick = null; resolve(v); };
+    $('shOk').onclick = () => close({ note: $('shNote').value.trim() });
+    $('shCancel').onclick = () => close(null);
+    $('mask').onclick = e => { if (e.target === $('mask')) close(null); };
+  });
+}
+function busy(on){ $('busy').hidden = !on; }
+// 首次載入失敗時把錯誤固定顯示在頁面上（toast 會消失，不利除錯）
+function fail(msg){
+  if (!state) $('mine').innerHTML = `<div class="empty" style="color:var(--red)">載入失敗：${esc(msg)}</div>`;
+  else if (state.mineUnknown){
+    // 時段已從 Firebase 顯示，只有「我的預約」沒拿到：明確告訴客人，並給重試按鈕（不要一直顯示讀取中）
+    $('mine').innerHTML = `<div class="empty" style="color:var(--red)">「我的預約」暫時讀不到（Google 忙碌或網路不穩）。<button id="mineRetry" style="margin-left:6px">再試一次</button><div class="hint">可以先選時段預約；送出時會重新確認。</div></div>`;
+    $('mineRetry').onclick = () => { $('mine').innerHTML = '<div class="empty">讀取我的預約中…</div>'; call('init', {}, true); };
+  }
+  else if (document.body.classList.contains('stale')){ $('errmsg').textContent = '無法更新：' + msg; $('errbox').hidden = false; }
+  toast(msg);
+}
+let toastTimer;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+</script>
+</body>
+</html>

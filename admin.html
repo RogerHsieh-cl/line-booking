@@ -282,7 +282,9 @@
 
 <script>
 /* ======== 跟 index.html 相同的兩個值 ======== */
-const LIFF_ID = '2011839889-nTlHfdBE';
+// 新舊 LIFF 並存：網址在 /v2/ 底下的頁面用龍極堂 Provider 的新 LIFF，其餘維持舊的（舊客人的預約綁舊 UID）
+const IS_V2 = /\/v2\//.test(location.pathname);
+const LIFF_ID = IS_V2 ? '2011981426-jiIQRqi1' : '2011839889-nTlHfdBE';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzOUACsp-0V7mQE8g1idgYgFWbnjc0Kpo0UIhK8tfVG8Fig2t9U8zk1uSsOfu9mk5mY/exec';
 /* ============================================ */
 
