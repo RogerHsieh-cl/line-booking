@@ -215,6 +215,16 @@
     </div>
 
     <div class="card">
+      <h2>新預約通知（給店家）</h2>
+      <p class="desc">客人預約／取消／改期時，通知店家。開關在這裡，收件人與 token 在 Apps Script 的指令碼屬性。LINE 官方帳號每月推播額度用完時，先關掉 LINE，其餘照常通知。</p>
+      <div class="grid">
+        <div class="fld"><label class="sw" for="f-nl"><input type="checkbox" id="f-nl"> LINE 通知</label><div class="desc" id="nlNote"></div></div>
+        <div class="fld"><label class="sw" for="f-nm"><input type="checkbox" id="f-nm"> Email 通知</label><div class="desc" id="nmNote"></div></div>
+        <div class="fld"><label class="sw" for="f-nt"><input type="checkbox" id="f-nt"> Telegram 通知</label><div class="desc" id="ntNote"></div></div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>公休日</h2>
       <p class="desc">這些日期整天不開放預約。已過的日期儲存時會自動清掉。</p>
       <div class="addrow"><input type="date" id="closedIn" aria-label="新增公休日"><button id="closedAdd">加入公休日</button></div>
@@ -304,6 +314,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 let idToken = '', days = 7, data = null;
 let saved = null, cur = null;   // 設定：已儲存 / 編輯中
 let remReady = false;           // 後端是否已設定 LINE_MESSAGING_TOKEN
+let notifyReady = {};           // 通知收件人是否已在指令碼屬性設好 {line, mail, tg}
 let staffSel = '';              // 預約總覽：篩選師傅
 const openStaff = new Set();    // 師傅分頁：展開中的卡片
 // Google 日曆事件顏色代號 → 色碼（預約事件會用這個顏色）
@@ -715,6 +726,8 @@ function norm(s){
   o.reminderEnabled = !!o.reminderEnabled;
   o.reminderHour = Number.isInteger(o.reminderHour) ? o.reminderHour : 20;
   remReady = !!o.reminderReady; delete o.reminderReady;
+  notifyReady = o.notifyReady || {}; delete o.notifyReady;
+  o.notifyLine = o.notifyLine !== false; o.notifyMail = o.notifyMail !== false; o.notifyTg = o.notifyTg !== false;
   savedVer = o.cfgVer || ''; delete o.cfgVer;   // 存檔時送回，後端用來擋「用舊資料蓋掉新設定」
   o.anyStaff = o.anyStaff !== false;
   o.slotStepMinutes = Number.isInteger(o.slotStepMinutes) ? o.slotStepMinutes : 0;
@@ -778,6 +791,10 @@ function renderSettings(){
   $('f-remh').innerHTML = Array.from({length:24}, (_, h) => h).filter(h => h >= 7 && h <= 23)
     .map(h => `<option value="${h}" ${h === cur.reminderHour ? 'selected' : ''}>前一天 ${String(h).padStart(2,'0')}:00</option>`).join('');
   $('remWarn').hidden = remReady;
+  [['nl','notifyLine','line','NOTIFY_UIDS＋LINE_MESSAGING_TOKEN'], ['nm','notifyMail','mail','NOTIFY_EMAIL'], ['nt','notifyTg','tg','TELEGRAM_BOT_TOKEN＋TELEGRAM_CHAT_IDS']].forEach(([id, k, r, prop]) => {
+    $('f-' + id).checked = !!cur[k];
+    $(id + 'Note').textContent = notifyReady[r] ? '收件人已設定' : '尚未設定（指令碼屬性 ' + prop + '），開啟也不會發送';
+  });
   hzPreview();
 
   $('closedList').innerHTML = cur.closedDates.length
@@ -841,6 +858,9 @@ function onChange(e){
   }
   if (t.id === 'f-full'){ cur.showFullSlots = t.checked; updateSaveBar(); }
   if (t.id === 'f-rem'){ cur.reminderEnabled = t.checked; updateSaveBar(); }
+  if (t.id === 'f-nl'){ cur.notifyLine = t.checked; updateSaveBar(); }
+  if (t.id === 'f-nm'){ cur.notifyMail = t.checked; updateSaveBar(); }
+  if (t.id === 'f-nt'){ cur.notifyTg = t.checked; updateSaveBar(); }
   if (t.id === 'f-remh'){ cur.reminderHour = Number(t.value); updateSaveBar(); }
 }
 $('pane-settings').addEventListener('change', onChange);
