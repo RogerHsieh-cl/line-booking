@@ -215,7 +215,7 @@ function decodeView(j){
     const dm = Number(d) * 60000;
     j.slotsBy[d] = j.slotsC[d] ? j.slotsC[d].split(',').map(x => {
       const p = x.split('.').map(Number), start = j.base + p[0] * 60000, di = Math.floor(p[0] / 1440);
-      const o = { start, end: start + dm, date: days[di] || (days[di] = ymd(j.base + di * 86400000 + 43200000)), ok: !!(p[1] & 1), mine: !!(p[1] & 2) };
+      const o = { start, end: start + dm, date: days[di] || (days[di] = ymd(j.base + di * 86400000 + 43200000)), ok: !!(p[1] & 1), mine: !!(p[1] & 2), lk: !!(p[1] & 4) };
       if (p.length > 2){ o.w = bits(p[2]); o.f = bits(p[3]); }
       return o;
     }) : [];
@@ -272,7 +272,12 @@ function mergePublic(snap){
   Object.keys(j.slotsBy).forEach(d => {
     j.slotsBy[d] = j.slotsBy[d].filter(s => s.start >= earliest).map(s => {
       const hit = j.mine.filter(b => b.start < s.end && b.end > s.start);
-      if (hit.length){ s.ok = false; s.mine = hit.some(b => b.start === s.start); }
+      if (hit.length){
+        const same = hit.filter(b => b.start === s.start).length, lim = (j.config && j.config.maxPerSlotPerUser) || 1;
+        s.mine = same > 0;
+        s.lk = same < hit.length || same >= lim;     // 跟別的開始時間重疊，或同時段已達上限 → 我不能再約
+        if (s.lk) s.ok = false;
+      }
       return s;
     });
   });
@@ -493,7 +498,8 @@ function render(){
   }).join('');
 
   $('slots').innerHTML = byDate[selDate].map(s => {
-    if (s.mine) return `<button class="slot mine" disabled>${hm(s.start)}<br><small>我的</small></button>`;
+    if (s.mine && !s.ok) return `<button class="slot mine" disabled>${hm(s.start)}<br><small>我的</small></button>`;
+    if (s.mine) return `<button class="slot mine" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}<br><small>已約・可再約</small></button>`;
     if (!s.ok)  return `<button class="slot full" disabled>${hm(s.start)}<br><small>已滿</small></button>`;
     return `<button class="slot" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}</button>`;
   }).join('');
@@ -512,7 +518,7 @@ function viewSlots(){
   let list = (state.slotsBy && state.slotsBy[selDur]) || state.slots;
   if (state.config.staffMode && selStaff){
     list = list.filter(s => s.mine || s.w.includes(selStaff))
-      .map(s => Object.assign({}, s, { ok: !s.mine && s.f.includes(selStaff) }));
+      .map(s => Object.assign({}, s, { ok: !s.lk && s.f.includes(selStaff) }));
   }
   if (!state.config.showFullSlots) list = list.filter(s => s.ok || s.mine);
   return list;

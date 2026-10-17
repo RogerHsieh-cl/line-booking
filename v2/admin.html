@@ -199,6 +199,7 @@
         <div class="fld"><label for="f-lead">最晚需提前多久預約</label><div class="in"><input type="number" id="f-lead" min="0" max="10080"><span class="u">分鐘</span></div></div>
         <div class="fld"><label for="f-cancel">開始前多久內不可取消/改期</label><div class="in"><input type="number" id="f-cancel" min="0" max="10080"><span class="u">分鐘</span></div></div>
         <div class="fld"><label for="f-max">每人同時最多預約</label><div class="in"><input type="number" id="f-max" min="1" max="50"><span class="u">筆</span></div></div>
+        <div class="fld"><label for="f-pp">同一時段每人最多預約幾位師傅</label><div class="in"><input type="number" id="f-pp" min="1" max="5"><span class="u">位</span></div><div class="desc">1 = 同一時間只能約一位；2 = 可帶朋友一起，各約一位師傅（需兩位師傅都有空）。每人預約上限仍會計算。</div></div>
         <div class="fld"><label class="sw" for="f-full"><input type="checkbox" id="f-full"> 已滿的時段仍顯示（灰色）</label></div>
       </div>
     </div>
@@ -730,6 +731,7 @@ function norm(s){
   o.notifyLine = o.notifyLine !== false; o.notifyMail = o.notifyMail !== false; o.notifyTg = o.notifyTg !== false;
   savedVer = o.cfgVer || ''; delete o.cfgVer;   // 存檔時送回，後端用來擋「用舊資料蓋掉新設定」
   o.anyStaff = o.anyStaff !== false;
+  o.maxPerSlotPerUser = Number.isInteger(o.maxPerSlotPerUser) ? o.maxPerSlotPerUser : 1;
   o.slotStepMinutes = Number.isInteger(o.slotStepMinutes) ? o.slotStepMinutes : 0;
   o.durations = (Array.isArray(o.durations) && o.durations.length ? o.durations : [o.slotMinutes]).slice().sort((a, b) => a - b);
   o.staff = (o.staff || []).map(s => ({ id:s.id, name:s.name, on:s.on !== false, color:String(s.color || '1'), hours:s.hours || null, off:(s.off || []).slice().sort(), cal:s.cal || '', title:s.title || '', bio:s.bio || '', photo:s.photo || '' }));
@@ -786,6 +788,7 @@ function renderSettings(){
   $('f-lead').value = cur.minLeadMinutes;
   $('f-cancel').value = cur.minCancelMinutes;
   $('f-max').value = cur.maxActivePerUser;
+  $('f-pp').value = cur.maxPerSlotPerUser;
   $('f-full').checked = !!cur.showFullSlots;
   $('f-rem').checked = cur.reminderEnabled;
   $('f-remh').innerHTML = Array.from({length:24}, (_, h) => h).filter(h => h >= 7 && h <= 23)
@@ -848,7 +851,7 @@ function onChange(e){
     cur.durations = t.checked ? Array.from(new Set(cur.durations.concat(d))).sort((a, b) => a - b) : cur.durations.filter(x => x !== d);
     updateSaveBar(); return;
   }
-  const map = { 'f-slot':'slotMinutes', 'f-step':'slotStepMinutes', 'f-cap':'capacity', 'f-hz':'horizonDays', 'f-lead':'minLeadMinutes', 'f-cancel':'minCancelMinutes', 'f-max':'maxActivePerUser' };
+  const map = { 'f-slot':'slotMinutes', 'f-step':'slotStepMinutes', 'f-cap':'capacity', 'f-hz':'horizonDays', 'f-lead':'minLeadMinutes', 'f-cancel':'minCancelMinutes', 'f-max':'maxActivePerUser', 'f-pp':'maxPerSlotPerUser' };
   if (map[t.id]){
     cur[map[t.id]] = Number(t.value);
     if (t.id === 'f-slot' && !cur.durations.includes(cur.slotMinutes)) cur.durations = cur.durations.concat(cur.slotMinutes).sort((a, b) => a - b);
@@ -1057,7 +1060,7 @@ function validate(s){
     names.add(st.name);
     if (st.hours) for (const [k, lbl] of WEEK){ const m = chk(st.hours[k], `${st.name} ${lbl}`); if (m) return m; }
   }
-  const rng = { capacity:[1,50,'每個時段人數'], horizonDays:[1,90,'開放天數'], minLeadMinutes:[0,10080,'提前預約'], minCancelMinutes:[0,10080,'取消截止'], maxActivePerUser:[1,50,'每人預約上限'] };
+  const rng = { capacity:[1,50,'每個時段人數'], horizonDays:[1,90,'開放天數'], minLeadMinutes:[0,10080,'提前預約'], minCancelMinutes:[0,10080,'取消截止'], maxActivePerUser:[1,50,'每人預約上限'], maxPerSlotPerUser:[1,5,'同一時段每人最多預約幾位'] };
   for (const k in rng){ const v = s[k]; if (!Number.isInteger(v) || v < rng[k][0] || v > rng[k][1]) return `${rng[k][2]}需為 ${rng[k][0]}–${rng[k][1]} 的整數`; }
   return '';
 }
