@@ -577,8 +577,10 @@ function durLabel(m){ return m % 30 === 0 && m >= 60 ? `${m / 60} 小時` : `${m
 function viewSlots(){
   let list = (moving && moveSlots && moveSlots.slotsBy[selDur]) || (state.slotsBy && state.slotsBy[selDur]) || state.slots;
   if (state.config.staffMode && selStaff){
-    list = list.filter(s => s.mine || s.w.includes(selStaff))
-      .map(s => Object.assign({}, s, { ok: !s.lk && s.f.includes(selStaff) }));
+    // 只留這位師傅有上班的時段；「我的」只標約的是這位師傅的那筆（約別的師傅的不會跑進這位師傅的班表）
+    const mineHere = new Set(((state.mine) || []).filter(b => b.staff === selStaff).map(b => b.start));
+    list = list.filter(s => s.w.includes(selStaff))
+      .map(s => Object.assign({}, s, { mine: mineHere.has(s.start), ok: !s.lk && s.f.includes(selStaff) }));
   }
   if (!state.config.showFullSlots) list = list.filter(s => s.ok || s.mine);
   return list;
