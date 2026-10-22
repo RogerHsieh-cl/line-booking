@@ -76,6 +76,7 @@
   #loadbar{position:fixed;left:0;right:0;top:0;height:3px;z-index:40;overflow:hidden;pointer-events:none}
   #loadbar::before{content:"";position:absolute;inset:0;width:40%;background:var(--g);animation:lb 1s ease-in-out infinite}
   @keyframes lb{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+  #slots.wait{pointer-events:none;opacity:.5}
   body.stale #mine, body.stale #slots, body.stale #staffs, body.stale #durs, body.stale #dates{pointer-events:none;opacity:.6}
   #slowhint{margin:12px;padding:10px 14px;border-radius:10px;background:#f3f4f6;font-size:13px;color:var(--sub);display:flex;justify-content:space-between;align-items:center;gap:8px}
   [hidden]{display:none!important}
@@ -136,6 +137,7 @@ const TZ = 'Asia/Taipei';
 const WD = {Sun:'日',Mon:'一',Tue:'二',Wed:'三',Thu:'四',Fri:'五',Sat:'六'};
 const $ = id => document.getElementById(id);
 let idToken = '', state = null, selDate = null, moving = null;
+let moveSlots = null, moveLoading = false;   // 改期用時段（後端排除原本那筆重算）；舊版後端不支援時為 null，沿用一般時段
 let selStaff = null;   // 師傅代號；'' = 不指定
 let selDur = null;     // 服務長度（分鐘）
 // Google 日曆事件顏色（與管理頁、日曆上的顏色一致）
@@ -456,9 +458,10 @@ function render(){
 
   // 改期提示
   if (moving && !mine.some(b => b.id === moving.id)) moving = null;
+  if (!moving || (moveSlots && moveSlots.id !== moving.id)){ moveSlots = null; if (!moving) moveLoading = false; }
   $('banner').hidden = !moving;
   if (moving){
-    $('banner').innerHTML = `<span>改期中：原 ${range(moving.start, moving.end)}，請選擇新時段</span><button id="stopMove">取消改期</button>`;
+    $('banner').innerHTML = `<span>改期中：原 ${range(moving.start, moving.end)}，${moveLoading ? '正在讀取可改的時段…' : '請選擇新時段'}</span><button id="stopMove">取消改期</button>`;
     $('stopMove').onclick = () => { moving = null; render(); };
   }
   $('pickTitle').textContent = moving ? '選擇新時段' : '選擇時段';
@@ -497,7 +500,9 @@ function render(){
     return `<button class="date ${d === selDate ? 'on' : ''}" data-date="${d}">${md(byDate[d][0].start)}<small>${n ? '可約 ' + n : '已滿'}</small></button>`;
   }).join('');
 
+  $('slots').classList.toggle('wait', !!moving && moveLoading);
   $('slots').innerHTML = byDate[selDate].map(s => {
+    if (moving && moveSlots && s.start === moving.start && s.end === moving.end) return `<button class="slot mine" disabled>${hm(s.start)}<br><small>原時段</small></button>`;
     if (s.mine && !s.ok) return `<button class="slot mine" disabled>${hm(s.start)}<br><small>我的</small></button>`;
     if (s.mine) return `<button class="slot mine" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}<br><small>已約・可再約</small></button>`;
     if (!s.ok)  return `<button class="slot full" disabled>${hm(s.start)}<br><small>已滿</small></button>`;
@@ -515,7 +520,7 @@ function avatar(s){
 /* 選了特定師傅時，只看那位師傅的班表與空檔 */
 function durLabel(m){ return m % 30 === 0 && m >= 60 ? `${m / 60} 小時` : `${m} 分鐘`; }
 function viewSlots(){
-  let list = (state.slotsBy && state.slotsBy[selDur]) || state.slots;
+  let list = (moving && moveSlots && moveSlots.slotsBy[selDur]) || (state.slotsBy && state.slotsBy[selDur]) || state.slots;
   if (state.config.staffMode && selStaff){
     list = list.filter(s => s.mine || s.w.includes(selStaff))
       .map(s => Object.assign({}, s, { ok: !s.lk && s.f.includes(selStaff) }));
@@ -553,6 +558,7 @@ $('slots').addEventListener('click', async e => {
     if (!r) return;
     const j = await call('reschedule', { eventId: moving.id, start, staff: selStaff, duration: selDur });
     if (j){ moving = null; done(j.done); render(); }
+    else if (moving) loadMoveSlots(moving);
   }else{
     const who = staffLabel();
     const r = await sheet({ title:'確認預約', body:`<b>${range(start, end)}</b>${who ? `<br>師傅：${esc(who)}` : ''}`, note:true, okText:'確認預約' });
@@ -578,8 +584,10 @@ $('mine').addEventListener('click', async e => {
       if (bk.auto && state.config.anyStaff) selStaff = '';
       else if (state.staff.some(s => s.id === bk.staff)) selStaff = bk.staff;
     }
+    moveSlots = null;
     render();
     window.scrollTo({ top: $('banner').offsetTop - 8, behavior:'smooth' });
+    loadMoveSlots(bk);
   }else{
     const r = await sheet({ title:'取消預約', body:`確定取消 <b>${range(bk.start, bk.end)}</b>？`, okText:'確定取消', danger:true });
     if (!r) return;
@@ -587,6 +595,37 @@ $('mine').addEventListener('click', async e => {
     if (j) done(j.done);
   }
 });
+
+/* ---------- 改期時段：自己原本那筆不能擋自己，請後端排除後重算 ----------
+ * 一般時段把原預約算成「佔用」：選 1.5 小時改期時，跟原時段重疊的 16:00、16:30、17:30… 全變已滿。
+ * 讀取失敗或後端還沒更新（BAD_ACTION）就沿用一般時段，送出時後端仍會排除原預約再驗證。 */
+async function loadMoveSlots(bk){
+  const t = performance.now();
+  moveLoading = true; render();
+  let j = null;
+  try{
+    await liffReady;
+    if (tokenExpired()){ relogin(); return; }
+    idToken = liff.getIDToken();
+    let r;
+    try{ r = await gasFetch(JSON.stringify({ action:'moveSlots', idToken, fmt:2, eventId: bk.id }), { tries:3, timeoutMs:45000 }); }
+    catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw bad; }
+    j = r.j;
+    if (!moving || moving.id !== bk.id) return;    // 客人已取消改期或換了另一筆
+    if (j && j.ok && j.moveId === bk.id && (j.slotsC || j.slotsBy)){
+      moveSlots = { id: bk.id, slotsBy: decodeView(Object.assign({ config: state.config, staff: state.staff }, j)).slotsBy };
+    }else if (j && j.error === 'TOKEN_INVALID'){ relogin(); return; }
+    else if (!(j && j.error === 'BAD_ACTION')){
+      queueLog({ what:'moveSlots', result:(j && j.error) || '回應不完整', ms:Math.round(performance.now() - t), detail:(j && j.message) || '' });
+      toast('讀不到可改的時段，先顯示一般時段');
+    }
+  }catch(e){
+    queueLog({ what:'moveSlots', result: e && e.name === 'AbortError' ? '逾時' : '連線失敗', ms:Math.round(performance.now() - t), detail:String((e && e.message) || e) });
+    if (moving && moving.id === bk.id) toast('讀不到可改的時段，先顯示一般時段');
+  }finally{
+    if (moving && moving.id === bk.id){ moveLoading = false; render(); }
+  }
+}
 
 /* ---------- 完成通知 ---------- */
 async function done(d){
