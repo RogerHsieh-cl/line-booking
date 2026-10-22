@@ -373,6 +373,57 @@ function gasFetch(body, { tries = 1, hedgeMs = HEDGE_MS, timeoutMs = 20000 } = {
     start();
   });
 }
+/* ---------- 寫入（預約／改期／取消）回應遺失的補救 ----------
+ * 實測：後端 5 秒就寫好，但回應在 Google 轉址那段弄丟，前端苦等 45 秒逾時，畫面還看不到這筆。
+ * 寫入不能直接重送（會重複預約），改成：WRITE_PROBE_MS 沒回應（或連線中斷）就用 init 查「我的預約」，
+ * 看到這筆已成立就當成功；原本的請求若先回來就用原本的。 */
+const WRITE_ACTIONS = ['book', 'reschedule', 'cancel'], WRITE_PROBE_MS = 12000;
+function landed(action, extra, before, mine){
+  const dur = extra.duration ? Number(extra.duration) * 60000 : 0;
+  const fit = b => b.start === Number(extra.start) && (!dur || b.end - b.start === dur);
+  const out = b => ({ action, start:b.start, end:b.end, staffName:b.staffName || '' });
+  if (action === 'book'){ const b = mine.find(x => fit(x) && !before.some(y => y.id === x.id)); return b ? out(b) : null; }
+  if (action === 'reschedule'){ const b = mine.find(x => x.id === extra.eventId && fit(x)); return b ? out(b) : null; }
+  const p = before.find(x => x.id === extra.eventId);
+  return p && !mine.some(x => x.id === extra.eventId) ? out(p) : null;
+}
+function writeFetch(action, extra, body){
+  const before = (state && state.mine) || [];
+  return new Promise((resolve, reject) => {
+    let settled = false, probing = false, probeDone = false, origDone = false, origErr = null;
+    const finish = (fn, v) => { if (settled) return; settled = true; clearTimeout(timer); $('busy').textContent = '處理中…'; fn(v); };
+    const probe = async () => {
+      if (probing || settled) return;
+      probing = true; $('busy').textContent = '確認預約狀態中…';
+      const notes = [];
+      for (let i = 0; i < 4 && !settled; i++){
+        try{
+          const p = await gasFetch(JSON.stringify({ action:'init', idToken, fmt:2 }), { tries:2, timeoutMs:20000 });
+          const j = p.j;
+          if (settled) return;
+          if (j && j.ok && j.user && j.config && Array.isArray(j.mine)){
+            const d = landed(action, extra, before, j.mine);
+            if (d){ j.done = d; notes.push(`第 ${i + 1} 次查詢：已成立`); return finish(resolve, { res:p.res, txt:p.txt, j, n:1, notes, probed:true }); }
+            notes.push(`第 ${i + 1} 次查詢：尚未成立`);
+          }else notes.push(`第 ${i + 1} 次查詢：回應不完整`);
+        }catch(_){ notes.push(`第 ${i + 1} 次查詢失敗`); }
+        if (origDone && i >= 1) break;               // 原請求已失敗、查了兩次都沒看到 → 確定沒成立
+        await new Promise(r => setTimeout(r, 4000));
+      }
+      probeDone = true;
+      if (origDone) finish(reject, origErr);
+    };
+    gasFetch(body, { tries:1, timeoutMs:45000 })
+      .then(v => finish(resolve, v))
+      .catch(e => {
+        origDone = true; origErr = e;
+        if (e && e.txt !== undefined) return finish(reject, e);   // 後端有回話（錯誤頁等）：照原本流程處理
+        if (probeDone) return finish(reject, e);
+        if (!probing){ clearTimeout(timer); probe(); }            // 連線中斷／逾時：可能其實寫好了，去查
+      });
+    const timer = setTimeout(probe, WRITE_PROBE_MS);
+  });
+}
 let lastFailRetryable = false, reqSeq = 0, appliedSeq = 0;
 async function call(action, extra = {}, isRetry = false){
   const seq = ++reqSeq;                     // 晚回來的舊回應（例如開頁讀取比預約晚到）不能蓋掉新結果
@@ -389,8 +440,10 @@ async function call(action, extra = {}, isRetry = false){
     // 讀取（init）：6 秒沒回應就同時再送一次，誰先回來用誰；預約／改期／取消只送一次
     let r;
     // Google 入口有時 20 多秒才回，所以每次最多等 45 秒（背景讀取，不擋畫面）
-    try{ r = await gasFetch(JSON.stringify({ action, idToken, fmt:2, ...extra }), quiet ? { tries:3, timeoutMs:45000 } : { tries:1, timeoutMs:45000 }); }
+    const body = JSON.stringify({ action, idToken, fmt:2, ...extra });
+    try{ r = await (WRITE_ACTIONS.includes(action) ? writeFetch(action, extra, body) : gasFetch(body, quiet ? { tries:3, timeoutMs:45000 } : { tries:1, timeoutMs:45000 })); }
     catch(bad){ if (bad && bad.txt !== undefined) r = bad; else throw bad; }
+    if (r.probed) queueLog({ what:action, result:'回應遺失→查詢確認已成立', ms:Math.round(performance.now() - tA), detail:r.notes.join('；') });
     if (r.n > 1) queueLog({ what:action, result:`第 ${r.n} 次才成功`, ms:Math.round(performance.now() - tA), detail:r.notes.join('；') });
     const res = r.res, txt = r.txt;
     let j = r.j;
@@ -429,6 +482,7 @@ async function call(action, extra = {}, isRetry = false){
     const timeout = e.name === 'AbortError';
     if (!/後端回傳的不是資料/.test(e.message || '')) queueLog({ what:action + (isRetry ? '（重試）' : ''), result:timeout ? '逾時' : '連線失敗', ms:typeof tA === 'number' ? Math.round(performance.now() - tA) : 0, detail:String(e.message || e) });
     if (quiet && !isRetry){ lastFailRetryable = true; return null; }   // main() 會自動重試
+    if (WRITE_ACTIONS.includes(action) && state) reload = true;          // 寫入可能其實成功了：重新讀我的預約
     fail(timeout ? '連線逾時（45 秒），請確認網路後重新整理' : '連線失敗：' + (e.message || e));
     return null;
   }finally{
