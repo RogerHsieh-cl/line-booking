@@ -399,6 +399,7 @@ async function main(){
     if (tab) switchTab(tab);
     if (!fbOk){ await loadList(); mark('gas'); }        // 第一次用這支手機、或金鑰換過：走 Apps Script（會順便拿到新連結）
     else if (!expired && Date.now() - fbAt > 3 * 60000) loadList();   // 快照超過 3 分鐘：背景補拿最新，畫面先用快照
+    pollTimer = setTimeout(pollSnapshot, POLL_MS);                    // 之後每分鐘自動讀快照
     // 開後台超過 3 秒才看到清單 → 記一筆，分段看卡在哪（LINE 登入元件／LINE 登入／Firebase／Apps Script）
     const shown = fbOk ? MARK.fb : MARK.gas;
     if (shown > 3000) queueLog({ what:'開頁', result:'慢', ms:shown,
@@ -408,7 +409,7 @@ async function main(){
 }
 
 const WRITE_ACTIONS = ['adminCancel', 'saveSettings', 'testPush', 'uploadPhoto'];
-let inflight = 0;
+let inflight = 0, writing = 0, lastWriteAt = 0;
 /* ---------- 呼叫 Apps Script：讀取類「避險請求」----------
  * Google 入口偶爾卡 10～30 秒（後端其實 1 秒就算完），或把請求變成「開網址」只回版本資訊。
  * 做法：送出後 HEDGE_MS 還沒回來就再送一次，誰先回來用誰（最多 tries 次）；
@@ -460,6 +461,7 @@ async function call(action, extra){
   const write = WRITE_ACTIONS.includes(action) || !!(extra && extra.mail);   // 寫入、寄信不能重送
   const block = write && action !== 'adminCancel';                         // 取消預約在背景跑，不擋畫面
   if (block) busy(true); else { inflight++; $('loadbar').hidden = false; }
+  if (write) writing++;
   try{
     if (tokenExpired()){ relogin(); return { ok:false, msg:'登入已過期，重新登入中…' }; }
     idToken = liff.getIDToken();
@@ -494,7 +496,10 @@ async function call(action, extra){
     queueLog({ what:action, result:'連線失敗', ms:typeof tA === 'number' ? Math.round(performance.now() - tA) : 0, detail:String(e.message || e) });
     return { ok:false, msg:'連線失敗：' + (e.message || e) };
   }
-  finally{ if (block) busy(false); else if (--inflight <= 0) { inflight = 0; $('loadbar').hidden = true; } }
+  finally{
+    if (write){ writing = Math.max(0, writing - 1); lastWriteAt = Date.now(); }
+    if (block) busy(false); else if (--inflight <= 0) { inflight = 0; $('loadbar').hidden = true; }
+  }
 }
 
 /* ---------------- 分頁 ---------------- */
@@ -547,12 +552,16 @@ function rememberAdmPub(url){
     else if (url === '') localStorage.removeItem(ADM_PUB);
   }catch(_){}
 }
-async function loadFromFirebase(){
+async function loadFromFirebase(poll){
   const url = admPubUrl(); if (!url) return false;
   const ac = new AbortController(), to = setTimeout(() => ac.abort(), 8000), t = performance.now();
   try{
     const snap = await (await fetch(url, { cache:'no-store', signal: ac.signal })).json();
     if (!snap || snap.v !== 1 || !snap.data){ rememberAdmPub(''); return false; }   // 金鑰換過（舊路徑已刪）：改走 Apps Script 拿新的
+    if (poll){
+      // 自動更新：快照沒變、或比剛做完的取消／存檔還舊（還沒同步到）就不套用，免得被取消的那筆又跑回來
+      if (writing || (snap.t || 0) <= fbAt || (snap.t || 0) <= lastWriteAt){ if (fbAt) refreshAgo(); return true; }
+    }
     const d = JSON.parse(snap.data);
     fbAt = snap.t || Date.now();
     if (!$('from').value || $('from').value === d.from){
@@ -560,7 +569,7 @@ async function loadFromFirebase(){
       data = { from: d.from, days: d.days, bookings: d.bookings, staff: d.staff, usageLevel: d.usageLevel };
       staleAt = 0; saveCachedList(data); renderList(); usageBadge(d.usageLevel);
     }
-    if (d.settings && !isDirty()) applySettings(d.settings);
+    if (d.settings && !isDirty() && !(poll && (!$('pane-settings').hidden || !$('pane-staff').hidden))) applySettings(d.settings);   // 正在看設定／排班時不自動重畫，免得展開的卡片被收起
     if (d.usage){ usage = d.usage; usageBadge(usage.level); if (!$('pane-usage').hidden) renderUsage(); }
     const ms = Math.round(performance.now() - t);
     if (ms > SLOW_CLIENT_MS) queueLog({ what:'讀取後台快照', result:'慢', ms, detail:'' });
@@ -570,6 +579,18 @@ async function loadFromFirebase(){
     return false;
   }finally{ clearTimeout(to); }
 }
+/* ---------- 自動更新：每分鐘讀一次快照（只讀 Firebase，不呼叫 Apps Script）----------
+ * 後台開著不動時，客人預約／取消、別的管理者改設定，畫面也會跟上；切回這個分頁時立刻讀一次。 */
+const POLL_MS = 60000;
+let pollTimer = 0;
+function pollSnapshot(){
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(pollSnapshot, POLL_MS);
+  if (document.hidden || !admPubUrl()) return;
+  loadFromFirebase(true);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && admPubUrl()) pollSnapshot(); });
+function refreshAgo(){ const el = $('summary') && $('summary').querySelector('.stale'); if (el && fbAt && !staleAt) el.innerHTML = `資料同步於${ago(fbAt)}（每分鐘自動更新；要最新可按「重新整理」）`; }
 const ago = t => { const m = Math.floor((Date.now() - t) / 60000); return m < 1 ? '剛剛' : m < 60 ? `${m} 分鐘前` : m < 1440 ? `${Math.floor(m / 60)} 小時前` : `${Math.floor(m / 1440)} 天前`; };
 async function loadList(){
   const j = await call('admin', { from: $('from').value, days: FETCH_DAYS, withSettings: !saved || settingsStale });
@@ -594,7 +615,7 @@ function renderList(){
   const list = data.bookings.filter(b => b.date < end && (!staffSel || b.staff === staffSel));
   $('summary').innerHTML = `共 <b>${list.length}</b> 筆預約　<span>（尚未開始 ${list.filter(b => !b.past).length} 筆）</span>` +
     (staleAt ? `<div class="stale">⏳ 顯示${ago(staleAt)}的資料，正在更新…</div>` :
-     fbAt ? `<div class="stale" style="color:var(--sub)">資料同步於${ago(fbAt)}（有預約、取消會在 1 分鐘內自動更新；要最新可按「重新整理」）</div>` : '');
+     fbAt ? `<div class="stale" style="color:var(--sub)">資料同步於${ago(fbAt)}（每分鐘自動更新；要最新可按「重新整理」）</div>` : '');
   if (!list.length){ $('list').innerHTML = '<section><div class="empty">這段期間沒有預約</div></section>'; return; }
   const today = ymd(Date.now()), by = {};
   list.forEach(b => (by[b.date] = by[b.date] || []).push(b));
