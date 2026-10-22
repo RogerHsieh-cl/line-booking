@@ -35,6 +35,11 @@
   .seg button{border:0;border-radius:0;border-right:1px solid var(--bd)}
   .seg button:last-child{border-right:0}
   .seg button.on{background:var(--g);color:#fff}
+  /* 師傅篩選：師傅多時手機放不下 → 單列左右滑動 */
+  #staffFilter{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action:pan-x}
+  #staffFilter::-webkit-scrollbar{display:none}
+  #staffFilter button{flex:none;white-space:nowrap}
+  #staffBar{min-width:0;max-width:100%}
   .summary{padding:0 16px;color:var(--sub);font-size:14px}
   .summary b{color:var(--tx);font-size:18px;font-variant-numeric:tabular-nums}
   .summary .stale{font-size:13px;color:#b26a00;margin-top:4px}
@@ -611,6 +616,8 @@ function renderList(){
     if (staffSel && !staff.some(s => s.id === staffSel)) staffSel = '';
     $('staffFilter').innerHTML = `<button data-sf="" class="${staffSel ? '' : 'on'}">全部</button>` +
       staff.map(s => `<button data-sf="${esc(s.id)}" class="${s.id === staffSel ? 'on' : ''}"><span class="dot" style="background:${COLORS[s.color] || '#999'}"></span> ${esc(s.name)}</button>`).join('');
+    const on = $('staffFilter').querySelector('button.on');   // 選中的師傅捲到看得見
+    if (on && on.offsetLeft + on.offsetWidth > $('staffFilter').clientWidth) $('staffFilter').scrollLeft = on.offsetLeft - 16;
   }
   const list = data.bookings.filter(b => b.date < end && (!staffSel || b.staff === staffSel));
   $('summary').innerHTML = `共 <b>${list.length}</b> 筆預約　<span>（尚未開始 ${list.filter(b => !b.past).length} 筆）</span>` +
