@@ -206,6 +206,7 @@
         <div class="fld"><label for="f-max">每人同時最多預約</label><div class="in"><input type="number" id="f-max" min="1" max="50"><span class="u">筆</span></div></div>
         <div class="fld"><label for="f-pp">同一時段每人最多預約幾位師傅</label><div class="in"><input type="number" id="f-pp" min="1" max="5"><span class="u">位</span></div><div class="desc">1 = 同一時間只能約一位；2 = 可帶朋友一起，各約一位師傅（需兩位師傅都有空）。每人預約上限仍會計算。</div></div>
         <div class="fld"><label class="sw" for="f-full"><input type="checkbox" id="f-full"> 已滿的時段仍顯示（灰色）</label></div>
+        <div class="fld"><label class="sw" for="f-lsc"><input type="checkbox" id="f-lsc"> 最後一段營業時間：開始時間可到打烊（例：營業到 23:00，最晚 23:00 開始，服務可超過打烊）</label></div>
       </div>
     </div>
 
@@ -818,6 +819,7 @@ function renderSettings(){
   $('f-max').value = cur.maxActivePerUser;
   $('f-pp').value = cur.maxPerSlotPerUser;
   $('f-full').checked = !!cur.showFullSlots;
+  $('f-lsc').checked = !!cur.lastStartAtClose;
   $('f-rem').checked = cur.reminderEnabled;
   $('f-remh').innerHTML = Array.from({length:24}, (_, h) => h).filter(h => h >= 7 && h <= 23)
     .map(h => `<option value="${h}" ${h === cur.reminderHour ? 'selected' : ''}>前一天 ${String(h).padStart(2,'0')}:00</option>`).join('');
@@ -888,6 +890,7 @@ function onChange(e){
     updateSaveBar();
   }
   if (t.id === 'f-full'){ cur.showFullSlots = t.checked; updateSaveBar(); }
+  if (t.id === 'f-lsc'){ cur.lastStartAtClose = t.checked; updateSaveBar(); }
   if (t.id === 'f-rem'){ cur.reminderEnabled = t.checked; updateSaveBar(); }
   if (t.id === 'f-nl'){ cur.notifyLine = t.checked; updateSaveBar(); }
   if (t.id === 'f-nm'){ cur.notifyMail = t.checked; updateSaveBar(); }
