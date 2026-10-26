@@ -559,7 +559,12 @@ function render(){
     if (moving && moveSlots && s.start === moving.start && s.end === moving.end) return `<button class="slot mine" disabled>${hm(s.start)}<br><small>原時段</small></button>`;
     if (s.mine && !s.ok) return `<button class="slot mine" disabled>${hm(s.start)}<br><small>我的</small></button>`;
     if (s.mine) return `<button class="slot mine" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}<br><small>已約・可再約</small></button>`;
-    if (!s.ok && s.lk) return `<button class="slot full" disabled>${hm(s.start)}<br><small>與預約重疊</small></button>`;   // 空的，但跟自己另一筆預約時間重疊
+    if (!s.ok && s.lk){   // 空的，但跟自己另一筆預約時間重疊
+      // 只有「開始時間落在預約時段內」的才標「與預約重疊」；開始時間早於那筆預約的（只是這個時長會撞到後面）照一般時段顯示，點下去由後端最終把關
+      const hit = (state.mine || []).filter(b => !(moving && b.id === moving.id) && b.start < s.end && b.end > s.start);
+      if (hit.length && hit.every(b => s.start < b.start)) return `<button class="slot" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}</button>`;
+      return `<button class="slot full" disabled>${hm(s.start)}<br><small>與預約重疊</small></button>`;
+    }
     if (!s.ok)  return `<button class="slot full" disabled>${hm(s.start)}<br><small>已滿</small></button>`;
     return `<button class="slot" data-start="${s.start}" data-end="${s.end}">${hm(s.start)}</button>`;
   }).join('');
